@@ -1,0 +1,9 @@
+lint:
+	GOOS=darwin golangci-lint run --fix ./...
+	GOOS=linux golangci-lint run --fix ./...
+
+test:
+	go test -p 1 -v ./...
+
+benchmark:
+	go test -benchmem -run=^$$ -bench .

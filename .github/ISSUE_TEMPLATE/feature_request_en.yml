@@ -1,0 +1,43 @@
+name: (English) Feature request
+description: Suggest an idea for this project
+labels:
+  - enhancement
+title: "[Feature] <title>"
+body:
+  - type: markdown
+    attributes:
+      value: "## Welcome to the Clash.Rev open-source community"
+
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to make a suggestion to the Clash core.  
+        
+        Prior to submitting this issue, please read and follow the guidelines below to ensure that your issue can be resolved as quickly as possible. Options marked with an asterisk (*) are required, while others are optional. If the information you provide does not comply with the requirements, the maintainers may not respond and may directly close the issue.  
+        
+        If you can implement your idea by yourself, we welcome you to submit a pull request to merge your changes upstream.
+
+  - type: checkboxes
+    id: ensure
+    attributes:
+      label: Prerequisites
+      description: "If any of the following options do not apply, please do not submit this issue as we will close it"
+      options:
+        - label: "I understand that this is the official open-source version of the Clash core, **only providing support for the open-source version or Premium version**"
+          required: true
+        - label: "I have looked for my idea in [the issue tracker](https://github.com/MerlinKodo/clash-rev/issues?q=is%3Aissue+label%3Aenhancement), **and found none of which being related**"
+          required: true
+        - label: "I have read the [official Wiki](https://merlinkodo.github.io/clash-rev-doc/)"
+          required: true
+
+  - type: textarea
+    attributes:
+      label: Description
+      placeholder: "Please explain your suggestions in detail and in a clear manner. For instance, how does this issue impact you? What specific functionality are you hoping to achieve? Also, let us know what Clash Core is currently doing in terms of your suggestion, and what you would like it to do instead."
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Possible Solution
+      placeholder: "Do you have any ideas on the implementation details?"

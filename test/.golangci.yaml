@@ -1,0 +1,16 @@
+linters:
+  disable-all: true
+  enable:
+    - gofumpt
+    - govet
+    - gci
+    - staticcheck
+
+linters-settings:
+  gci:
+    sections:
+      - standard
+      - default
+      - prefix(github.com/MerlinKodo/clash-rev)
+  staticcheck:
+    go: '1.21'
