@@ -7,7 +7,7 @@
 
 ## Important Notice
 
-**The project's development will not begin until after December 1, 2023, to avoid potential risks. In addition, there is a need for time to organize and analyze the code. If the Clash-core author restarts development within three months, our project will be halted to avoid unnecessary competition.**
+**There is a need for time to organize and analyze the code. If the Clash-core author restarts development within three months, our project will be halted to avoid unnecessary competition.**
 
 ## Description
 
