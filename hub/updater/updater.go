@@ -23,7 +23,6 @@ import (
 )
 
 // modify from https://github.com/AdguardTeam/AdGuardHome/blob/595484e0b3fb4c457f9bb727a6b94faa78a66c5f/internal/updater/updater.go
-// Updater is the Clash.Meta updater.
 var (
 	goarm           string
 	gomips          string
