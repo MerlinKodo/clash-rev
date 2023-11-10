@@ -13,7 +13,9 @@ import (
 )
 
 var (
-	fileMode os.FileMode = 0o666
+	initOnce     sync.Once
+	fileMode     os.FileMode = 0o666
+	defaultCache *CacheFile
 
 	bucketSelected = []byte("selected")
 	bucketFakeip   = []byte("fakeip")
@@ -130,12 +132,22 @@ func (c *CacheFile) GetFakeip(key []byte) []byte {
 	return bucket.Get(key)
 }
 
+func (c *CacheFile) FlushFakeIP() error {
+	err := c.DB.Batch(func(t *bbolt.Tx) error {
+		bucket := t.Bucket(bucketFakeip)
+		if bucket == nil {
+			return nil
+		}
+		return t.DeleteBucket(bucketFakeip)
+	})
+	return err
+}
+
 func (c *CacheFile) Close() error {
 	return c.DB.Close()
 }
 
-// Cache return singleton of CacheFile
-var Cache = sync.OnceValue(func() *CacheFile {
+func initCache() {
 	options := bbolt.Options{Timeout: time.Second}
 	db, err := bbolt.Open(C.Path.Cache(), fileMode, &options)
 	switch err {
@@ -151,7 +163,14 @@ var Cache = sync.OnceValue(func() *CacheFile {
 		log.Warnln("[CacheFile] can't open cache file: %s", err.Error())
 	}
 
-	return &CacheFile{
+	defaultCache = &CacheFile{
 		DB: db,
 	}
-})
+}
+
+// Cache return singleton of CacheFile
+func Cache() *CacheFile {
+	initOnce.Do(initCache)
+
+	return defaultCache
+}

@@ -3,6 +3,8 @@ package constant
 import (
 	"net"
 
+	N "github.com/MerlinKodo/clash-rev/common/net"
+
 	"github.com/gofrs/uuid/v5"
 )
 
@@ -13,7 +15,7 @@ type PlainContext interface {
 type ConnContext interface {
 	PlainContext
 	Metadata() *Metadata
-	Conn() net.Conn
+	Conn() *N.BufferedConn
 }
 
 type PacketConnContext interface {

@@ -3,29 +3,21 @@ package outboundgroup
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/MerlinKodo/clash-rev/adapter/outbound"
-	"github.com/MerlinKodo/clash-rev/common/singledo"
 	"github.com/MerlinKodo/clash-rev/component/dialer"
+	"github.com/MerlinKodo/clash-rev/component/proxydialer"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/constant/provider"
 )
 
 type Relay struct {
-	*outbound.Base
-	single    *singledo.Single
-	providers []provider.ProxyProvider
+	*GroupBase
 }
 
 // DialContext implements C.ProxyAdapter
 func (r *Relay) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (C.Conn, error) {
-	var proxies []C.Proxy
-	for _, proxy := range r.proxies(metadata, true) {
-		if proxy.Type() != C.Direct {
-			proxies = append(proxies, proxy)
-		}
-	}
+	proxies, chainProxies := r.proxies(metadata, true)
 
 	switch len(proxies) {
 	case 0:
@@ -33,43 +25,85 @@ func (r *Relay) DialContext(ctx context.Context, metadata *C.Metadata, opts ...d
 	case 1:
 		return proxies[0].DialContext(ctx, metadata, r.Base.DialOptions(opts...)...)
 	}
-
-	first := proxies[0]
+	var d C.Dialer
+	d = dialer.NewDialer(r.Base.DialOptions(opts...)...)
+	for _, proxy := range proxies[:len(proxies)-1] {
+		d = proxydialer.New(proxy, d, false)
+	}
 	last := proxies[len(proxies)-1]
-
-	c, err := dialer.DialContext(ctx, "tcp", first.Addr(), r.Base.DialOptions(opts...)...)
+	conn, err := last.DialContextWithDialer(ctx, d, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("%s connect error: %w", first.Addr(), err)
-	}
-	tcpKeepAlive(c)
-
-	var currentMeta *C.Metadata
-	for _, proxy := range proxies[1:] {
-		currentMeta, err = addrToMetadata(proxy.Addr())
-		if err != nil {
-			return nil, err
-		}
-
-		c, err = first.StreamConn(c, currentMeta)
-		if err != nil {
-			return nil, fmt.Errorf("%s connect error: %w", first.Addr(), err)
-		}
-
-		first = proxy
+		return nil, err
 	}
 
-	c, err = last.StreamConn(c, metadata)
+	for i := len(chainProxies) - 2; i >= 0; i-- {
+		conn.AppendToChains(chainProxies[i])
+	}
+
+	conn.AppendToChains(r)
+
+	return conn, nil
+}
+
+// ListenPacketContext implements C.ProxyAdapter
+func (r *Relay) ListenPacketContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.PacketConn, err error) {
+	proxies, chainProxies := r.proxies(metadata, true)
+
+	switch len(proxies) {
+	case 0:
+		return outbound.NewDirect().ListenPacketContext(ctx, metadata, r.Base.DialOptions(opts...)...)
+	case 1:
+		return proxies[0].ListenPacketContext(ctx, metadata, r.Base.DialOptions(opts...)...)
+	}
+
+	var d C.Dialer
+	d = dialer.NewDialer(r.Base.DialOptions(opts...)...)
+	for _, proxy := range proxies[:len(proxies)-1] {
+		d = proxydialer.New(proxy, d, false)
+	}
+	last := proxies[len(proxies)-1]
+	pc, err := last.ListenPacketWithDialer(ctx, d, metadata)
 	if err != nil {
-		return nil, fmt.Errorf("%s connect error: %w", last.Addr(), err)
+		return nil, err
 	}
 
-	return outbound.NewConn(c, r), nil
+	for i := len(chainProxies) - 2; i >= 0; i-- {
+		pc.AppendToChains(chainProxies[i])
+	}
+
+	pc.AppendToChains(r)
+
+	return pc, nil
+}
+
+// SupportUDP implements C.ProxyAdapter
+func (r *Relay) SupportUDP() bool {
+	proxies, _ := r.proxies(nil, false)
+	if len(proxies) == 0 { // C.Direct
+		return true
+	}
+	for i := len(proxies) - 1; i >= 0; i-- {
+		proxy := proxies[i]
+		if !proxy.SupportUDP() {
+			return false
+		}
+		if proxy.SupportUOT() {
+			return true
+		}
+		switch proxy.SupportWithDialer() {
+		case C.ALLNet:
+		case C.UDP:
+		default: // C.TCP and C.InvalidNet
+			return false
+		}
+	}
+	return true
 }
 
 // MarshalJSON implements C.ProxyAdapter
 func (r *Relay) MarshalJSON() ([]byte, error) {
-	var all []string
-	for _, proxy := range r.rawProxies(false) {
+	all := []string{}
+	for _, proxy := range r.GetProxies(false) {
 		all = append(all, proxy.Name())
 	}
 	return json.Marshal(map[string]any{
@@ -78,37 +112,51 @@ func (r *Relay) MarshalJSON() ([]byte, error) {
 	})
 }
 
-func (r *Relay) rawProxies(touch bool) []C.Proxy {
-	elm, _, _ := r.single.Do(func() (any, error) {
-		return getProvidersProxies(r.providers, touch), nil
-	})
+func (r *Relay) proxies(metadata *C.Metadata, touch bool) ([]C.Proxy, []C.Proxy) {
+	rawProxies := r.GetProxies(touch)
 
-	return elm.([]C.Proxy)
-}
+	var proxies []C.Proxy
+	var chainProxies []C.Proxy
+	var targetProxies []C.Proxy
 
-func (r *Relay) proxies(metadata *C.Metadata, touch bool) []C.Proxy {
-	proxies := r.rawProxies(touch)
-
-	for n, proxy := range proxies {
-		subproxy := proxy.Unwrap(metadata)
+	for n, proxy := range rawProxies {
+		proxies = append(proxies, proxy)
+		chainProxies = append(chainProxies, proxy)
+		subproxy := proxy.Unwrap(metadata, touch)
 		for subproxy != nil {
+			chainProxies = append(chainProxies, subproxy)
 			proxies[n] = subproxy
-			subproxy = subproxy.Unwrap(metadata)
+			subproxy = subproxy.Unwrap(metadata, touch)
 		}
 	}
 
-	return proxies
+	for _, proxy := range proxies {
+		if proxy.Type() != C.Direct && proxy.Type() != C.Compatible {
+			targetProxies = append(targetProxies, proxy)
+		}
+	}
+
+	return targetProxies, chainProxies
+}
+
+func (r *Relay) Addr() string {
+	proxies, _ := r.proxies(nil, false)
+	return proxies[len(proxies)-1].Addr()
 }
 
 func NewRelay(option *GroupCommonOption, providers []provider.ProxyProvider) *Relay {
 	return &Relay{
-		Base: outbound.NewBase(outbound.BaseOption{
-			Name:        option.Name,
-			Type:        C.Relay,
-			Interface:   option.Interface,
-			RoutingMark: option.RoutingMark,
+		GroupBase: NewGroupBase(GroupBaseOption{
+			outbound.BaseOption{
+				Name:        option.Name,
+				Type:        C.Relay,
+				Interface:   option.Interface,
+				RoutingMark: option.RoutingMark,
+			},
+			"",
+			"",
+			"",
+			providers,
 		}),
-		single:    singledo.NewSingle(defaultGetProxiesDuration),
-		providers: providers,
 	}
 }

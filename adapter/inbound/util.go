@@ -1,13 +1,13 @@
 package inbound
 
 import (
-	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
-	"github.com/MerlinKodo/clash-rev/common/util"
+	"github.com/MerlinKodo/clash-rev/common/nnip"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/transport/socks5"
 )
@@ -19,15 +19,14 @@ func parseSocksAddr(target socks5.Addr) *C.Metadata {
 	case socks5.AtypDomainName:
 		// trim for FQDN
 		metadata.Host = strings.TrimRight(string(target[2:2+target[1]]), ".")
-		metadata.DstPort = C.Port((int(target[2+target[1]]) << 8) | int(target[2+target[1]+1]))
+		metadata.DstPort = uint16((int(target[2+target[1]]) << 8) | int(target[2+target[1]+1]))
 	case socks5.AtypIPv4:
-		ip := net.IP(target[1 : 1+net.IPv4len])
-		metadata.DstIP = ip
-		metadata.DstPort = C.Port((int(target[1+net.IPv4len]) << 8) | int(target[1+net.IPv4len+1]))
+		metadata.DstIP = nnip.IpToAddr(net.IP(target[1 : 1+net.IPv4len]))
+		metadata.DstPort = uint16((int(target[1+net.IPv4len]) << 8) | int(target[1+net.IPv4len+1]))
 	case socks5.AtypIPv6:
-		ip := net.IP(target[1 : 1+net.IPv6len])
-		metadata.DstIP = ip
-		metadata.DstPort = C.Port((int(target[1+net.IPv6len]) << 8) | int(target[1+net.IPv6len+1]))
+		ip6, _ := netip.AddrFromSlice(target[1 : 1+net.IPv6len])
+		metadata.DstIP = ip6.Unmap()
+		metadata.DstPort = uint16((int(target[1+net.IPv6len]) << 8) | int(target[1+net.IPv6len+1]))
 	}
 
 	return metadata
@@ -35,32 +34,30 @@ func parseSocksAddr(target socks5.Addr) *C.Metadata {
 
 func parseHTTPAddr(request *http.Request) *C.Metadata {
 	host := request.URL.Hostname()
-	port, _ := strconv.ParseUint(util.EmptyOr(request.URL.Port(), "80"), 10, 16)
+	port := request.URL.Port()
+	if port == "" {
+		port = "80"
+	}
 
 	// trim FQDN (#737)
 	host = strings.TrimRight(host, ".")
 
+	var uint16Port uint16
+	if port, err := strconv.ParseUint(port, 10, 16); err == nil {
+		uint16Port = uint16(port)
+	}
+
 	metadata := &C.Metadata{
 		NetWork: C.TCP,
 		Host:    host,
-		DstIP:   nil,
-		DstPort: C.Port(port),
+		DstIP:   netip.Addr{},
+		DstPort: uint16Port,
 	}
 
-	if ip := net.ParseIP(host); ip != nil {
+	ip, err := netip.ParseAddr(host)
+	if err == nil {
 		metadata.DstIP = ip
 	}
 
 	return metadata
-}
-
-func parseAddr(addr net.Addr) (net.IP, int, error) {
-	switch a := addr.(type) {
-	case *net.TCPAddr:
-		return a.IP, a.Port, nil
-	case *net.UDPAddr:
-		return a.IP, a.Port, nil
-	default:
-		return nil, 0, fmt.Errorf("unknown address type %s", addr.String())
-	}
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/MerlinKodo/clash-rev/config"
 	"github.com/MerlinKodo/clash-rev/hub/executor"
 	"github.com/MerlinKodo/clash-rev/hub/route"
+	"github.com/MerlinKodo/clash-rev/log"
 )
 
 type Option func(*config.Config)
@@ -42,7 +43,8 @@ func Parse(options ...Option) error {
 	}
 
 	if cfg.General.ExternalController != "" {
-		go route.Start(cfg.General.ExternalController, cfg.General.Secret)
+		go route.Start(cfg.General.ExternalController, cfg.General.ExternalControllerTLS,
+			cfg.General.Secret, cfg.TLS.Certificate, cfg.TLS.PrivateKey, cfg.General.LogLevel == log.DEBUG)
 	}
 
 	executor.ApplyConfig(cfg, true)

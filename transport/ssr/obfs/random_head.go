@@ -1,13 +1,13 @@
 package obfs
 
 import (
-	"crypto/rand"
 	"encoding/binary"
 	"hash/crc32"
-	mathRand "math/rand"
 	"net"
 
 	"github.com/MerlinKodo/clash-rev/common/pool"
+
+	"github.com/zhangyunhao116/fastrand"
 )
 
 func init() {
@@ -54,10 +54,10 @@ func (c *randomHeadConn) Write(b []byte) (int, error) {
 	c.buf = append(c.buf, b...)
 	if !c.hasSentHeader {
 		c.hasSentHeader = true
-		dataLength := mathRand.Intn(96) + 4
+		dataLength := fastrand.Intn(96) + 4
 		buf := pool.Get(dataLength + 4)
 		defer pool.Put(buf)
-		rand.Read(buf[:dataLength])
+		fastrand.Read(buf[:dataLength])
 		binary.LittleEndian.PutUint32(buf[dataLength:], 0xffffffff-crc32.ChecksumIEEE(buf[:dataLength]))
 		_, err := c.Conn.Write(buf)
 		return len(b), err

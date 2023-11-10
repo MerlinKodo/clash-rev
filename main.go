@@ -7,10 +7,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 
 	"github.com/MerlinKodo/clash-rev/config"
 	C "github.com/MerlinKodo/clash-rev/constant"
+	"github.com/MerlinKodo/clash-rev/constant/features"
 	"github.com/MerlinKodo/clash-rev/hub"
 	"github.com/MerlinKodo/clash-rev/hub/executor"
 	"github.com/MerlinKodo/clash-rev/log"
@@ -21,6 +23,7 @@ import (
 var (
 	version            bool
 	testConfig         bool
+	geodataMode        bool
 	homeDir            string
 	configFile         string
 	externalUI         string
@@ -34,17 +37,16 @@ func init() {
 	flag.StringVar(&externalUI, "ext-ui", os.Getenv("CLASH_OVERRIDE_EXTERNAL_UI_DIR"), "override external ui directory, env: CLASH_OVERRIDE_EXTERNAL_UI_DIR")
 	flag.StringVar(&externalController, "ext-ctl", os.Getenv("CLASH_OVERRIDE_EXTERNAL_CONTROLLER"), "override external controller address, env: CLASH_OVERRIDE_EXTERNAL_CONTROLLER")
 	flag.StringVar(&secret, "secret", os.Getenv("CLASH_OVERRIDE_SECRET"), "override secret for RESTful API, env: CLASH_OVERRIDE_SECRET")
+	flag.BoolVar(&geodataMode, "m", false, "set geodata mode")
 	flag.BoolVar(&version, "v", false, "show current version of clash")
 	flag.BoolVar(&testConfig, "t", false, "test configuration and exit")
 	flag.Parse()
 }
 
 func main() {
-	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...any) {}))
+	setupMaxProcs()
 	if version {
-		fmt.Printf(
-			"Clash Rev Version: %s\nOS: %s\nArchitecture: %s\nGo Version: %s\nBuild Time: %s\n",
-			C.Version, runtime.GOOS, runtime.GOARCH, runtime.Version(), C.BuildTime)
+		printVersion()
 		return
 	}
 
@@ -67,35 +69,69 @@ func main() {
 		C.SetConfig(configFile)
 	}
 
+	if geodataMode {
+		C.GeodataMode = true
+	}
+
 	if err := config.Init(C.Path.HomeDir()); err != nil {
 		log.Fatalln("Initial configuration directory error: %s", err.Error())
 	}
 
 	if testConfig {
-		if _, err := executor.Parse(); err != nil {
-			log.Errorln(err.Error())
-			fmt.Printf("configuration file %s test failed\n", C.Path.Config())
-			os.Exit(1)
-		}
-		fmt.Printf("configuration file %s test is successful\n", C.Path.Config())
+		testConfiguration()
 		return
 	}
 
-	var options []hub.Option
-	if flag.Lookup("ext-ui").Value.String() != "" {
-		options = append(options, hub.WithExternalUI(externalUI))
-	}
-	if flag.Lookup("ext-ctl").Value.String() != "" {
-		options = append(options, hub.WithExternalController(externalController))
-	}
-	if flag.Lookup("secret").Value.String() != "" {
-		options = append(options, hub.WithSecret(secret))
-	}
-
+	options := parseOptions()
 	if err := hub.Parse(options...); err != nil {
 		log.Fatalln("Parse config error: %s", err.Error())
 	}
 
+	defer executor.Shutdown()
+
+	handleSignals()
+	fmt.Println("Clash Rev is running now, press Ctrl+C to exit.")
+	select {}
+}
+
+func setupMaxProcs() {
+	_, _ = maxprocs.Set(maxprocs.Logger(func(string, ...any) {}))
+}
+
+func printVersion() {
+	fmt.Printf(
+		"Clash Rev Version: %s\nOS: %s\nArchitecture: %s\nGo Version: %s\nBuild Time: %s\n",
+		C.Version, runtime.GOOS, runtime.GOARCH, runtime.Version(), C.BuildTime)
+	if len(features.TAGS) != 0 {
+		fmt.Printf("Use tags: %s\n", strings.Join(features.TAGS, ", "))
+	}
+}
+
+func testConfiguration() {
+	if _, err := executor.Parse(); err != nil {
+		log.Errorln(err.Error())
+		fmt.Printf("configuration file %s test failed\n", C.Path.Config())
+		os.Exit(1)
+		os.Exit(1)
+	}
+	fmt.Printf("configuration file %s test is successful\n", C.Path.Config())
+}
+
+func parseOptions() []hub.Option {
+	var options []hub.Option
+	if externalUI != "" {
+		options = append(options, hub.WithExternalUI(externalUI))
+	}
+	if externalController != "" {
+		options = append(options, hub.WithExternalController(externalController))
+	}
+	if secret != "" {
+		options = append(options, hub.WithSecret(secret))
+	}
+	return options
+}
+
+func handleSignals() {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
@@ -115,6 +151,4 @@ func main() {
 			}
 		}
 	}()
-	fmt.Println("Clash Rev is running now, press Ctrl+C to exit.")
-	select {}
 }

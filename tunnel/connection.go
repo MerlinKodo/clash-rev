@@ -7,8 +7,8 @@ import (
 	"time"
 
 	N "github.com/MerlinKodo/clash-rev/common/net"
-	"github.com/MerlinKodo/clash-rev/common/pool"
 	C "github.com/MerlinKodo/clash-rev/constant"
+	"github.com/MerlinKodo/clash-rev/log"
 )
 
 func handleUDPToRemote(packet C.UDPPacket, pc C.PacketConn, metadata *C.Metadata) error {
@@ -21,38 +21,65 @@ func handleUDPToRemote(packet C.UDPPacket, pc C.PacketConn, metadata *C.Metadata
 		return err
 	}
 	// reset timeout
-	pc.SetReadDeadline(time.Now().Add(udpTimeout))
+	_ = pc.SetReadDeadline(time.Now().Add(udpTimeout))
 
 	return nil
 }
 
-func handleUDPToLocal(packet C.UDPPacket, pc net.PacketConn, key string, oAddr, fAddr netip.Addr) {
-	buf := pool.Get(pool.UDPBufferSize)
-	defer pool.Put(buf)
-	defer natTable.Delete(key)
-	defer pc.Close()
+func handleUDPToLocal(writeBack C.WriteBack, pc N.EnhancePacketConn, key string, oAddrPort netip.AddrPort, fAddr netip.Addr) {
+	defer func() {
+		_ = pc.Close()
+		closeAllLocalCoon(key)
+		natTable.Delete(key)
+	}()
 
 	for {
-		pc.SetReadDeadline(time.Now().Add(udpTimeout))
-		n, from, err := pc.ReadFrom(buf)
+		_ = pc.SetReadDeadline(time.Now().Add(udpTimeout))
+		data, put, from, err := pc.WaitReadFrom()
 		if err != nil {
 			return
 		}
 
-		fromUDPAddr := *from.(*net.UDPAddr)
-		if fAddr.IsValid() {
-			fromAddr, _ := netip.AddrFromSlice(fromUDPAddr.IP)
-			fromAddr = fromAddr.Unmap()
-			if oAddr == fromAddr {
-				fromUDPAddr.IP = fAddr.AsSlice()
+		fromUDPAddr, isUDPAddr := from.(*net.UDPAddr)
+		if !isUDPAddr {
+			fromUDPAddr = net.UDPAddrFromAddrPort(oAddrPort) // oAddrPort was Unmapped
+			log.Warnln("server return a [%T](%s) which isn't a *net.UDPAddr, force replace to (%s), this may be caused by a wrongly implemented server", from, from, oAddrPort)
+		} else if fromUDPAddr == nil {
+			fromUDPAddr = net.UDPAddrFromAddrPort(oAddrPort) // oAddrPort was Unmapped
+			log.Warnln("server return a nil *net.UDPAddr, force replace to (%s), this may be caused by a wrongly implemented server", oAddrPort)
+		} else {
+			_fromUDPAddr := *fromUDPAddr
+			fromUDPAddr = &_fromUDPAddr // make a copy
+			if fromAddr, ok := netip.AddrFromSlice(fromUDPAddr.IP); ok {
+				fromAddr = fromAddr.Unmap()
+				if fAddr.IsValid() && (oAddrPort.Addr() == fromAddr) { // oAddrPort was Unmapped
+					fromAddr = fAddr.Unmap()
+				}
+				fromUDPAddr.IP = fromAddr.AsSlice()
+				if fromAddr.Is4() {
+					fromUDPAddr.Zone = "" // only ipv6 can have the zone
+				}
 			}
 		}
 
-		_, err = packet.WriteBack(buf[:n], &fromUDPAddr)
+		_, err = writeBack.WriteBack(data, fromUDPAddr)
+		if put != nil {
+			put()
+		}
 		if err != nil {
 			return
 		}
 	}
+}
+
+func closeAllLocalCoon(lAddr string) {
+	natTable.RangeForLocalConn(lAddr, func(key string, value *net.UDPConn) bool {
+		conn := value
+
+		conn.Close()
+		log.Debugln("Closing TProxy local conn... lAddr=%s rAddr=%s", lAddr, key)
+		return true
+	})
 }
 
 func handleSocket(ctx C.ConnContext, outbound net.Conn) {

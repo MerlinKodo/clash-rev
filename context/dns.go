@@ -1,6 +1,10 @@
 package context
 
 import (
+	"context"
+
+	"github.com/MerlinKodo/clash-rev/common/utils"
+
 	"github.com/gofrs/uuid/v5"
 	"github.com/miekg/dns"
 )
@@ -12,15 +16,18 @@ const (
 )
 
 type DNSContext struct {
+	context.Context
+
 	id  uuid.UUID
 	msg *dns.Msg
 	tp  string
 }
 
-func NewDNSContext(msg *dns.Msg) *DNSContext {
-	id, _ := uuid.NewV4()
+func NewDNSContext(ctx context.Context, msg *dns.Msg) *DNSContext {
 	return &DNSContext{
-		id:  id,
+		Context: ctx,
+
+		id:  utils.NewUUIDV4(),
 		msg: msg,
 	}
 }

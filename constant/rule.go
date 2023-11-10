@@ -1,42 +1,32 @@
 package constant
 
-const (
-	RuleConfigDomain        RuleConfig = "DOMAIN"
-	RuleConfigDomainSuffix  RuleConfig = "DOMAIN-SUFFIX"
-	RuleConfigDomainKeyword RuleConfig = "DOMAIN-KEYWORD"
-	RuleConfigGeoIP         RuleConfig = "GEOIP"
-	RuleConfigIPCIDR        RuleConfig = "IP-CIDR"
-	RuleConfigIPCIDR6       RuleConfig = "IP-CIDR6"
-	RuleConfigSrcIPCIDR     RuleConfig = "SRC-IP-CIDR"
-	RuleConfigSrcPort       RuleConfig = "SRC-PORT"
-	RuleConfigDstPort       RuleConfig = "DST-PORT"
-	RuleConfigInboundPort   RuleConfig = "INBOUND-PORT"
-	RuleConfigProcessName   RuleConfig = "PROCESS-NAME"
-	RuleConfigProcessPath   RuleConfig = "PROCESS-PATH"
-	RuleConfigIPSet         RuleConfig = "IPSET"
-	RuleConfigRuleSet       RuleConfig = "RULE-SET"
-	RuleConfigScript        RuleConfig = "SCRIPT"
-	RuleConfigMatch         RuleConfig = "MATCH"
-)
-
-// Rule Config Type String represents a rule type in configuration files.
-type RuleConfig string
-
 // Rule Type
 const (
 	Domain RuleType = iota
 	DomainSuffix
 	DomainKeyword
+	GEOSITE
 	GEOIP
 	IPCIDR
 	SrcIPCIDR
+	IPSuffix
+	SrcIPSuffix
 	SrcPort
 	DstPort
-	InboundPort
+	InPort
+	InUser
+	InName
+	InType
 	Process
 	ProcessPath
-	IPSet
+	RuleSet
+	Network
+	Uid
+	SubRules
 	MATCH
+	AND
+	OR
+	NOT
 )
 
 type RuleType int
@@ -49,26 +39,50 @@ func (rt RuleType) String() string {
 		return "DomainSuffix"
 	case DomainKeyword:
 		return "DomainKeyword"
+	case GEOSITE:
+		return "GeoSite"
 	case GEOIP:
 		return "GeoIP"
 	case IPCIDR:
 		return "IPCIDR"
 	case SrcIPCIDR:
 		return "SrcIPCIDR"
+	case IPSuffix:
+		return "IPSuffix"
+	case SrcIPSuffix:
+		return "SrcIPSuffix"
 	case SrcPort:
 		return "SrcPort"
 	case DstPort:
 		return "DstPort"
-	case InboundPort:
-		return "InboundPort"
+	case InPort:
+		return "InPort"
+	case InUser:
+		return "InUser"
+	case InName:
+		return "InName"
+	case InType:
+		return "InType"
 	case Process:
 		return "Process"
 	case ProcessPath:
 		return "ProcessPath"
-	case IPSet:
-		return "IPSet"
 	case MATCH:
 		return "Match"
+	case RuleSet:
+		return "RuleSet"
+	case Network:
+		return "Network"
+	case Uid:
+		return "Uid"
+	case SubRules:
+		return "SubRules"
+	case AND:
+		return "AND"
+	case OR:
+		return "OR"
+	case NOT:
+		return "NOT"
 	default:
 		return "Unknown"
 	}
@@ -76,7 +90,7 @@ func (rt RuleType) String() string {
 
 type Rule interface {
 	RuleType() RuleType
-	Match(metadata *Metadata) bool
+	Match(metadata *Metadata) (bool, string)
 	Adapter() string
 	Payload() string
 	ShouldResolveIP() bool

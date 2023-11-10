@@ -4,7 +4,7 @@ import (
 	"net"
 
 	"github.com/MerlinKodo/clash-rev/adapter/inbound"
-	"github.com/MerlinKodo/clash-rev/common/pool"
+	N "github.com/MerlinKodo/clash-rev/common/net"
 	"github.com/MerlinKodo/clash-rev/common/sockopt"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/log"
@@ -33,7 +33,13 @@ func (l *UDPListener) Close() error {
 	return l.packetConn.Close()
 }
 
-func NewUDP(addr string, in chan<- *inbound.PacketAdapter) (C.Listener, error) {
+func NewUDP(addr string, tunnel C.Tunnel, additions ...inbound.Addition) (*UDPListener, error) {
+	if len(additions) == 0 {
+		additions = []inbound.Addition{
+			inbound.WithInName("DEFAULT-SOCKS"),
+			inbound.WithSpecialRules(""),
+		}
+	}
 	l, err := net.ListenPacket("udp", addr)
 	if err != nil {
 		return nil, err
@@ -47,39 +53,40 @@ func NewUDP(addr string, in chan<- *inbound.PacketAdapter) (C.Listener, error) {
 		packetConn: l,
 		addr:       addr,
 	}
+	conn := N.NewEnhancePacketConn(l)
 	go func() {
 		for {
-			buf := pool.Get(pool.UDPBufferSize)
-			n, remoteAddr, err := l.ReadFrom(buf)
+			data, put, remoteAddr, err := conn.WaitReadFrom()
 			if err != nil {
-				pool.Put(buf)
+				if put != nil {
+					put()
+				}
 				if sl.closed {
 					break
 				}
 				continue
 			}
-			handleSocksUDP(l, in, buf[:n], remoteAddr)
+			handleSocksUDP(l, tunnel, data, put, remoteAddr, additions...)
 		}
 	}()
 
 	return sl, nil
 }
 
-func handleSocksUDP(pc net.PacketConn, in chan<- *inbound.PacketAdapter, buf []byte, addr net.Addr) {
+func handleSocksUDP(pc net.PacketConn, tunnel C.Tunnel, buf []byte, put func(), addr net.Addr, additions ...inbound.Addition) {
 	target, payload, err := socks5.DecodeUDPPacket(buf)
 	if err != nil {
 		// Unresolved UDP packet, return buffer to the pool
-		pool.Put(buf)
+		if put != nil {
+			put()
+		}
 		return
 	}
 	packet := &packet{
 		pc:      pc,
 		rAddr:   addr,
 		payload: payload,
-		bufRef:  buf,
+		put:     put,
 	}
-	select {
-	case in <- inbound.NewPacket(target, pc.LocalAddr(), packet, C.SOCKS5):
-	default:
-	}
+	tunnel.HandleUDPPacket(inbound.NewPacket(target, packet, C.SOCKS5, additions...))
 }

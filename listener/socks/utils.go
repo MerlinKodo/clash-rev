@@ -3,7 +3,6 @@ package socks
 import (
 	"net"
 
-	"github.com/MerlinKodo/clash-rev/common/pool"
 	"github.com/MerlinKodo/clash-rev/transport/socks5"
 )
 
@@ -11,7 +10,7 @@ type packet struct {
 	pc      net.PacketConn
 	rAddr   net.Addr
 	payload []byte
-	bufRef  []byte
+	put     func()
 }
 
 func (c *packet) Data() []byte {
@@ -33,5 +32,13 @@ func (c *packet) LocalAddr() net.Addr {
 }
 
 func (c *packet) Drop() {
-	pool.Put(c.bufRef)
+	if c.put != nil {
+		c.put()
+		c.put = nil
+	}
+	c.payload = nil
+}
+
+func (c *packet) InAddr() net.Addr {
+	return c.pc.LocalAddr()
 }

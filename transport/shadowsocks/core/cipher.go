@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	N "github.com/MerlinKodo/clash-rev/common/net"
 	"github.com/MerlinKodo/clash-rev/transport/shadowsocks/shadowaead"
 	"github.com/MerlinKodo/clash-rev/transport/shadowsocks/shadowstream"
 )
@@ -21,7 +22,7 @@ type StreamConnCipher interface {
 }
 
 type PacketConnCipher interface {
-	PacketConn(net.PacketConn) net.PacketConn
+	PacketConn(N.EnhancePacketConn) N.EnhancePacketConn
 }
 
 // ErrCipherNotSupported occurs when a cipher is not supported (likely because of security concerns).
@@ -59,6 +60,7 @@ var streamList = map[string]struct {
 	"AES-128-CFB":   {16, shadowstream.AESCFB},
 	"AES-192-CFB":   {24, shadowstream.AESCFB},
 	"AES-256-CFB":   {32, shadowstream.AESCFB},
+	"CHACHA20":      {32, shadowstream.ChaCha20},
 	"CHACHA20-IETF": {32, shadowstream.Chacha20IETF},
 	"XCHACHA20":     {32, shadowstream.Xchacha20},
 }
@@ -127,7 +129,7 @@ type AeadCipher struct {
 }
 
 func (aead *AeadCipher) StreamConn(c net.Conn) net.Conn { return shadowaead.NewConn(c, aead) }
-func (aead *AeadCipher) PacketConn(c net.PacketConn) net.PacketConn {
+func (aead *AeadCipher) PacketConn(c N.EnhancePacketConn) N.EnhancePacketConn {
 	return shadowaead.NewPacketConn(c, aead)
 }
 
@@ -138,7 +140,7 @@ type StreamCipher struct {
 }
 
 func (ciph *StreamCipher) StreamConn(c net.Conn) net.Conn { return shadowstream.NewConn(c, ciph) }
-func (ciph *StreamCipher) PacketConn(c net.PacketConn) net.PacketConn {
+func (ciph *StreamCipher) PacketConn(c N.EnhancePacketConn) N.EnhancePacketConn {
 	return shadowstream.NewPacketConn(c, ciph)
 }
 
@@ -146,8 +148,8 @@ func (ciph *StreamCipher) PacketConn(c net.PacketConn) net.PacketConn {
 
 type dummy struct{}
 
-func (dummy) StreamConn(c net.Conn) net.Conn             { return c }
-func (dummy) PacketConn(c net.PacketConn) net.PacketConn { return c }
+func (dummy) StreamConn(c net.Conn) net.Conn                       { return c }
+func (dummy) PacketConn(c N.EnhancePacketConn) N.EnhancePacketConn { return c }
 
 // key-derivation function from original Shadowsocks
 func Kdf(password string, keyLen int) []byte {

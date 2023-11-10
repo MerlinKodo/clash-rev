@@ -55,7 +55,7 @@ func (alloc *Allocator) Put(buf []byte) error {
 	if cap(buf) == 0 || cap(buf) > 65536 {
 		return nil
 	}
-
+	
 	bits := msb(cap(buf))
 	if cap(buf) != 1<<bits {
 		return errors.New("allocator Put() incorrect buffer size")

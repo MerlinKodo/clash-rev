@@ -3,6 +3,7 @@ package context
 import (
 	"net"
 
+	"github.com/MerlinKodo/clash-rev/common/utils"
 	C "github.com/MerlinKodo/clash-rev/constant"
 
 	"github.com/gofrs/uuid/v5"
@@ -15,9 +16,8 @@ type PacketConnContext struct {
 }
 
 func NewPacketConnContext(metadata *C.Metadata) *PacketConnContext {
-	id, _ := uuid.NewV4()
 	return &PacketConnContext{
-		id:       id,
+		id:       utils.NewUUIDV4(),
 		metadata: metadata,
 	}
 }

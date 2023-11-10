@@ -1,13 +1,14 @@
 package dns
 
 import (
-	"net"
+	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/MerlinKodo/clash-rev/common/cache"
+	"github.com/MerlinKodo/clash-rev/common/nnip"
 	"github.com/MerlinKodo/clash-rev/component/fakeip"
-	"github.com/MerlinKodo/clash-rev/component/trie"
+	R "github.com/MerlinKodo/clash-rev/component/resolver"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/context"
 	"github.com/MerlinKodo/clash-rev/log"
@@ -20,7 +21,7 @@ type (
 	middleware func(next handler) handler
 )
 
-func withHosts(hosts *trie.DomainTrie) middleware {
+func withHosts(hosts R.Hosts, mapping *cache.LruCache[netip.Addr, string]) middleware {
 	return func(next handler) handler {
 		return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
 			q := r.Question[0]
@@ -29,27 +30,62 @@ func withHosts(hosts *trie.DomainTrie) middleware {
 				return next(ctx, r)
 			}
 
-			record := hosts.Search(strings.TrimRight(q.Name, "."))
-			if record == nil {
+			host := strings.TrimRight(q.Name, ".")
+			handleCName := func(resp *D.Msg, domain string) {
+				rr := &D.CNAME{}
+				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeCNAME, Class: D.ClassINET, Ttl: 10}
+				rr.Target = domain + "."
+				resp.Answer = append([]D.RR{rr}, resp.Answer...)
+			}
+			record, ok := hosts.Search(host, q.Qtype != D.TypeA && q.Qtype != D.TypeAAAA)
+			if !ok {
+				if record != nil && record.IsDomain {
+					// replace request domain
+					newR := r.Copy()
+					newR.Question[0].Name = record.Domain + "."
+					resp, err := next(ctx, newR)
+					if err == nil {
+						resp.Id = r.Id
+						resp.Question = r.Question
+						handleCName(resp, record.Domain)
+					}
+					return resp, err
+				}
 				return next(ctx, r)
 			}
 
-			ip := record.Data.(net.IP)
 			msg := r.Copy()
+			handleIPs := func() {
+				for _, ipAddr := range record.IPs {
+					if ipAddr.Is4() && q.Qtype == D.TypeA {
+						rr := &D.A{}
+						rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: 10}
+						rr.A = ipAddr.AsSlice()
+						msg.Answer = append(msg.Answer, rr)
+						if mapping != nil {
+							mapping.SetWithExpire(ipAddr, host, time.Now().Add(time.Second*10))
+						}
+					} else if q.Qtype == D.TypeAAAA {
+						rr := &D.AAAA{}
+						rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeAAAA, Class: D.ClassINET, Ttl: 10}
+						ip := ipAddr.As16()
+						rr.AAAA = ip[:]
+						msg.Answer = append(msg.Answer, rr)
+						if mapping != nil {
+							mapping.SetWithExpire(ipAddr, host, time.Now().Add(time.Second*10))
+						}
+					}
+				}
+			}
 
-			if v4 := ip.To4(); v4 != nil && q.Qtype == D.TypeA {
-				rr := &D.A{}
-				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
-				rr.A = v4
-
-				msg.Answer = []D.RR{rr}
-			} else if v6 := ip.To16(); v6 != nil && q.Qtype == D.TypeAAAA {
-				rr := &D.AAAA{}
-				rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeAAAA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
-				rr.AAAA = v6
-
-				msg.Answer = []D.RR{rr}
-			} else {
+			switch q.Qtype {
+			case D.TypeA:
+				handleIPs()
+			case D.TypeAAAA:
+				handleIPs()
+			case D.TypeCNAME:
+				handleCName(r, record.Domain)
+			default:
 				return next(ctx, r)
 			}
 
@@ -57,13 +93,12 @@ func withHosts(hosts *trie.DomainTrie) middleware {
 			msg.SetRcode(r, D.RcodeSuccess)
 			msg.Authoritative = true
 			msg.RecursionAvailable = true
-
 			return msg, nil
 		}
 	}
 }
 
-func withMapping(mapping *cache.LruCache) middleware {
+func withMapping(mapping *cache.LruCache[netip.Addr, string]) middleware {
 	return func(next handler) handler {
 		return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
 			q := r.Question[0]
@@ -80,22 +115,16 @@ func withMapping(mapping *cache.LruCache) middleware {
 			host := strings.TrimRight(q.Name, ".")
 
 			for _, ans := range msg.Answer {
-				var ip net.IP
+				var ip netip.Addr
 				var ttl uint32
 
 				switch a := ans.(type) {
 				case *D.A:
-					ip = a.A
+					ip = nnip.IpToAddr(a.A)
 					ttl = a.Hdr.Ttl
-					if !ip.IsGlobalUnicast() {
-						continue
-					}
 				case *D.AAAA:
-					ip = a.AAAA
+					ip = nnip.IpToAddr(a.AAAA)
 					ttl = a.Hdr.Ttl
-					if !ip.IsGlobalUnicast() {
-						continue
-					}
 				default:
 					continue
 				}
@@ -103,7 +132,8 @@ func withMapping(mapping *cache.LruCache) middleware {
 				if ttl < 1 {
 					ttl = 1
 				}
-				mapping.SetWithExpire(ip.String(), host, time.Now().Add(time.Second*time.Duration(ttl)))
+
+				mapping.SetWithExpire(ip, host, time.Now().Add(time.Second*time.Duration(ttl)))
 			}
 
 			return msg, nil
@@ -133,7 +163,7 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 			rr := &D.A{}
 			rr.Hdr = D.RR_Header{Name: q.Name, Rrtype: D.TypeA, Class: D.ClassINET, Ttl: dnsDefaultTTL}
 			ip := fakePool.Lookup(host)
-			rr.A = ip
+			rr.A = ip.AsSlice()
 			msg := r.Copy()
 			msg.Answer = []D.RR{rr}
 
@@ -151,6 +181,7 @@ func withFakeIP(fakePool *fakeip.Pool) middleware {
 func withResolver(resolver *Resolver) handler {
 	return func(ctx *context.DNSContext, r *D.Msg) (*D.Msg, error) {
 		ctx.SetType(context.DNSTypeRaw)
+
 		q := r.Question[0]
 
 		// return a empty AAAA msg when ipv6 disabled
@@ -158,7 +189,7 @@ func withResolver(resolver *Resolver) handler {
 			return handleMsgWithEmptyAnswer(r), nil
 		}
 
-		msg, err := resolver.Exchange(r)
+		msg, err := resolver.ExchangeContext(ctx, r)
 		if err != nil {
 			log.Debugln("[DNS Server] Exchange %s failed: %v", q.String(), err)
 			return msg, err
@@ -181,15 +212,18 @@ func compose(middlewares []middleware, endpoint handler) handler {
 	return h
 }
 
-func newHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
+func NewHandler(resolver *Resolver, mapper *ResolverEnhancer) handler {
 	middlewares := []middleware{}
 
 	if resolver.hosts != nil {
-		middlewares = append(middlewares, withHosts(resolver.hosts))
+		middlewares = append(middlewares, withHosts(R.NewHosts(resolver.hosts), mapper.mapping))
 	}
 
 	if mapper.mode == C.DNSFakeIP {
 		middlewares = append(middlewares, withFakeIP(mapper.fakePool))
+	}
+
+	if mapper.mode != C.DNSNormal {
 		middlewares = append(middlewares, withMapping(mapper.mapping))
 	}
 

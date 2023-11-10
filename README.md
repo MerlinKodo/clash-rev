@@ -7,11 +7,11 @@
 
 ## Important Notice
 
-**There is a need for time to organize and analyze the code. If the Clash-core author restarts development within three months, our project will be halted to avoid unnecessary competition.**
+**There is a need for time to organize and analyze the code. If the Clash.Meta or Clash-core author restarts development within three months, our project will be halted to avoid unnecessary competition.**
 
 ## Description
 
-Clash.Rev is a personal successor to the discontinued Clash, providing enhanced network management capabilities with a focus on user-friendliness and advanced features for modern networking needs.
+Clash.Rev is a personal successor to the discontinued Clash-core and Clash.Meta, providing enhanced network management capabilities with a focus on user-friendliness and advanced features for modern networking needs.
 
 ## Features
 
@@ -38,4 +38,4 @@ You can find the latest documentation at [https://merlinkodo.github.io/clash-rev
 
 ## License
 
-This software is released under the GPL-3.0 license. Thanks for the original author [Dreamacro](https://github.com/Dreamacro)
+This software is released under the GPL-3.0 license. Thanks for the original author [Dreamacro](https://github.com/Dreamacro) and [wwqgtxx](https://github.com/wwqgtxx)

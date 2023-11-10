@@ -3,19 +3,24 @@ package outboundgroup
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"time"
 
 	"github.com/MerlinKodo/clash-rev/adapter/outbound"
-	"github.com/MerlinKodo/clash-rev/common/singledo"
+	"github.com/MerlinKodo/clash-rev/common/callback"
+	N "github.com/MerlinKodo/clash-rev/common/net"
+	"github.com/MerlinKodo/clash-rev/common/utils"
 	"github.com/MerlinKodo/clash-rev/component/dialer"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/constant/provider"
 )
 
 type Fallback struct {
-	*outbound.Base
-	disableUDP bool
-	single     *singledo.Single
-	providers  []provider.ProxyProvider
+	*GroupBase
+	disableUDP     bool
+	testUrl        string
+	selected       string
+	expectedStatus string
 }
 
 func (f *Fallback) Now() string {
@@ -29,7 +34,20 @@ func (f *Fallback) DialContext(ctx context.Context, metadata *C.Metadata, opts .
 	c, err := proxy.DialContext(ctx, metadata, f.Base.DialOptions(opts...)...)
 	if err == nil {
 		c.AppendToChains(f)
+	} else {
+		f.onDialFailed(proxy.Type(), err)
 	}
+
+	if N.NeedHandshake(c) {
+		c = callback.NewFirstWriteCallBackConn(c, func(err error) {
+			if err == nil {
+				f.onDialSuccess()
+			} else {
+				f.onDialFailed(proxy.Type(), err)
+			}
+		})
+	}
+
 	return c, err
 }
 
@@ -40,6 +58,7 @@ func (f *Fallback) ListenPacketContext(ctx context.Context, metadata *C.Metadata
 	if err == nil {
 		pc.AppendToChains(f)
 	}
+
 	return pc, err
 }
 
@@ -53,54 +72,100 @@ func (f *Fallback) SupportUDP() bool {
 	return proxy.SupportUDP()
 }
 
+// IsL3Protocol implements C.ProxyAdapter
+func (f *Fallback) IsL3Protocol(metadata *C.Metadata) bool {
+	return f.findAliveProxy(false).IsL3Protocol(metadata)
+}
+
 // MarshalJSON implements C.ProxyAdapter
 func (f *Fallback) MarshalJSON() ([]byte, error) {
-	var all []string
-	for _, proxy := range f.proxies(false) {
+	all := []string{}
+	for _, proxy := range f.GetProxies(false) {
 		all = append(all, proxy.Name())
 	}
 	return json.Marshal(map[string]any{
-		"type": f.Type().String(),
-		"now":  f.Now(),
-		"all":  all,
+		"type":     f.Type().String(),
+		"now":      f.Now(),
+		"all":      all,
+		"testUrl":  f.testUrl,
+		"expected": f.expectedStatus,
 	})
 }
 
 // Unwrap implements C.ProxyAdapter
-func (f *Fallback) Unwrap(metadata *C.Metadata) C.Proxy {
-	proxy := f.findAliveProxy(true)
+func (f *Fallback) Unwrap(metadata *C.Metadata, touch bool) C.Proxy {
+	proxy := f.findAliveProxy(touch)
 	return proxy
 }
 
-func (f *Fallback) proxies(touch bool) []C.Proxy {
-	elm, _, _ := f.single.Do(func() (any, error) {
-		return getProvidersProxies(f.providers, touch), nil
-	})
-
-	return elm.([]C.Proxy)
-}
-
 func (f *Fallback) findAliveProxy(touch bool) C.Proxy {
-	proxies := f.proxies(touch)
+	proxies := f.GetProxies(touch)
 	for _, proxy := range proxies {
-		if proxy.Alive() {
-			return proxy
+		if len(f.selected) == 0 {
+			// if proxy.Alive() {
+			if proxy.AliveForTestUrl(f.testUrl) {
+				return proxy
+			}
+		} else {
+			if proxy.Name() == f.selected {
+				// if proxy.Alive() {
+				if proxy.AliveForTestUrl(f.testUrl) {
+					return proxy
+				} else {
+					f.selected = ""
+				}
+			}
 		}
 	}
 
 	return proxies[0]
 }
 
+func (f *Fallback) Set(name string) error {
+	var p C.Proxy
+	for _, proxy := range f.GetProxies(false) {
+		if proxy.Name() == name {
+			p = proxy
+			break
+		}
+	}
+
+	if p == nil {
+		return errors.New("proxy not exist")
+	}
+
+	f.selected = name
+	// if !p.Alive() {
+	if !p.AliveForTestUrl(f.testUrl) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*time.Duration(5000))
+		defer cancel()
+		expectedStatus, _ := utils.NewIntRanges[uint16](f.expectedStatus)
+		_, _ = p.URLTest(ctx, f.testUrl, expectedStatus, C.ExtraHistory)
+	}
+
+	return nil
+}
+
+func (f *Fallback) ForceSet(name string) {
+	f.selected = name
+}
+
 func NewFallback(option *GroupCommonOption, providers []provider.ProxyProvider) *Fallback {
 	return &Fallback{
-		Base: outbound.NewBase(outbound.BaseOption{
-			Name:        option.Name,
-			Type:        C.Fallback,
-			Interface:   option.Interface,
-			RoutingMark: option.RoutingMark,
+		GroupBase: NewGroupBase(GroupBaseOption{
+			outbound.BaseOption{
+				Name:        option.Name,
+				Type:        C.Fallback,
+				Interface:   option.Interface,
+				RoutingMark: option.RoutingMark,
+			},
+			option.Filter,
+			option.ExcludeFilter,
+			option.ExcludeType,
+			providers,
 		}),
-		single:     singledo.NewSingle(defaultGetProxiesDuration),
-		providers:  providers,
-		disableUDP: option.DisableUDP,
+		disableUDP:     option.DisableUDP,
+		testUrl:        option.URL,
+		expectedStatus: option.ExpectedStatus,
 	}
 }

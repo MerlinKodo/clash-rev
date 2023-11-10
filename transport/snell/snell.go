@@ -1,6 +1,7 @@
 package snell
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -82,22 +83,22 @@ func (s *Snell) Read(b []byte) (int, error) {
 }
 
 func WriteHeader(conn net.Conn, host string, port uint, version int) error {
-	buf := pool.GetBytesBuffer()
-	defer pool.PutBytesBuffer(buf)
-	buf.PutUint8(Version)
+	buf := pool.GetBuffer()
+	defer pool.PutBuffer(buf)
+	buf.WriteByte(Version)
 	if version == Version2 {
-		buf.PutUint8(CommandConnectV2)
+		buf.WriteByte(CommandConnectV2)
 	} else {
-		buf.PutUint8(CommandConnect)
+		buf.WriteByte(CommandConnect)
 	}
 
 	// clientID length & id
-	buf.PutUint8(0)
+	buf.WriteByte(0)
 
 	// host & port
-	buf.PutUint8(uint8(len(host)))
-	buf.PutString(host)
-	buf.PutUint16be(uint16(port))
+	buf.WriteByte(uint8(len(host)))
+	buf.WriteString(host)
+	binary.Write(buf, binary.BigEndian, uint16(port))
 
 	if _, err := conn.Write(buf.Bytes()); err != nil {
 		return err
@@ -145,25 +146,25 @@ func PacketConn(conn net.Conn) net.PacketConn {
 }
 
 func writePacket(w io.Writer, socks5Addr, payload []byte) (int, error) {
-	buf := pool.GetBytesBuffer()
-	defer pool.PutBytesBuffer(buf)
+	buf := pool.GetBuffer()
+	defer pool.PutBuffer(buf)
 
 	// compose snell UDP address format (refer: icpz/snell-server-reversed)
 	// a brand new wheel to replace socks5 address format, well done Yachen
-	buf.PutUint8(CommondUDPForward)
+	buf.WriteByte(CommondUDPForward)
 	switch socks5Addr[0] {
 	case socks5.AtypDomainName:
 		hostLen := socks5Addr[1]
-		buf.PutSlice(socks5Addr[1 : 1+1+hostLen+2])
+		buf.Write(socks5Addr[1 : 1+1+hostLen+2])
 	case socks5.AtypIPv4:
-		buf.PutSlice([]byte{0x00, 0x04})
-		buf.PutSlice(socks5Addr[1 : 1+net.IPv4len+2])
+		buf.Write([]byte{0x00, 0x04})
+		buf.Write(socks5Addr[1 : 1+net.IPv4len+2])
 	case socks5.AtypIPv6:
-		buf.PutSlice([]byte{0x00, 0x06})
-		buf.PutSlice(socks5Addr[1 : 1+net.IPv6len+2])
+		buf.Write([]byte{0x00, 0x06})
+		buf.Write(socks5Addr[1 : 1+net.IPv6len+2])
 	}
 
-	buf.PutSlice(payload)
+	buf.Write(payload)
 	_, err := w.Write(buf.Bytes())
 	if err != nil {
 		return 0, err

@@ -3,19 +3,20 @@ package constant
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 )
 
 // DNSModeMapping is a mapping for EnhancedMode enum
 var DNSModeMapping = map[string]DNSMode{
-	DNSNormal.String(): DNSNormal,
-	DNSFakeIP.String(): DNSFakeIP,
+	DNSNormal.String():  DNSNormal,
+	DNSFakeIP.String():  DNSFakeIP,
+	DNSMapping.String(): DNSMapping,
 }
 
 const (
 	DNSNormal DNSMode = iota
 	DNSFakeIP
 	DNSMapping
+	DNSHosts
 )
 
 type DNSMode int
@@ -28,7 +29,7 @@ func (e *DNSMode) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 	mode, exist := DNSModeMapping[tp]
 	if !exist {
-		return fmt.Errorf("invalid mode: %s", tp)
+		return errors.New("invalid mode")
 	}
 	*e = mode
 	return nil
@@ -64,7 +65,63 @@ func (e DNSMode) String() string {
 		return "fake-ip"
 	case DNSMapping:
 		return "redir-host"
+	case DNSHosts:
+		return "hosts"
 	default:
 		return "unknown"
 	}
 }
+
+type DNSPrefer int
+
+const (
+	DualStack DNSPrefer = iota
+	IPv4Only
+	IPv6Only
+	IPv4Prefer
+	IPv6Prefer
+)
+
+var dnsPreferMap = map[string]DNSPrefer{
+	DualStack.String():  DualStack,
+	IPv4Only.String():   IPv4Only,
+	IPv6Only.String():   IPv6Only,
+	IPv4Prefer.String(): IPv4Prefer,
+	IPv6Prefer.String(): IPv6Prefer,
+}
+
+func (d DNSPrefer) String() string {
+	switch d {
+	case DualStack:
+		return "dual"
+	case IPv4Only:
+		return "ipv4"
+	case IPv6Only:
+		return "ipv6"
+	case IPv4Prefer:
+		return "ipv4-prefer"
+	case IPv6Prefer:
+		return "ipv6-prefer"
+	default:
+		return "dual"
+	}
+}
+
+func NewDNSPrefer(prefer string) DNSPrefer {
+	if p, ok := dnsPreferMap[prefer]; ok {
+		return p
+	} else {
+		return DualStack
+	}
+}
+
+type HTTPVersion string
+
+const (
+	// HTTPVersion11 is HTTP/1.1.
+	HTTPVersion11 HTTPVersion = "http/1.1"
+	// HTTPVersion2 is HTTP/2.
+	HTTPVersion2 HTTPVersion = "h2"
+	// HTTPVersion3 is HTTP/3.
+	HTTPVersion3 HTTPVersion = "h3"
+)

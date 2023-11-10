@@ -4,36 +4,57 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"math/rand"
 	"net"
+	"net/netip"
 	"strings"
 
+	"github.com/MerlinKodo/clash-rev/component/ca"
 	"github.com/MerlinKodo/clash-rev/component/dialer"
 	"github.com/MerlinKodo/clash-rev/component/resolver"
+	C "github.com/MerlinKodo/clash-rev/constant"
 
 	D "github.com/miekg/dns"
+	"github.com/zhangyunhao116/fastrand"
 )
 
 type client struct {
 	*D.Client
-	r     *Resolver
-	port  string
-	host  string
-	iface string
+	r            *Resolver
+	port         string
+	host         string
+	iface        string
+	proxyAdapter C.ProxyAdapter
+	proxyName    string
+	addr         string
 }
 
-func (c *client) Exchange(m *D.Msg) (*D.Msg, error) {
-	return c.ExchangeContext(context.Background(), m)
+var _ dnsClient = (*client)(nil)
+
+// Address implements dnsClient
+func (c *client) Address() string {
+	if len(c.addr) != 0 {
+		return c.addr
+	}
+	schema := "udp"
+	if strings.HasPrefix(c.Client.Net, "tcp") {
+		schema = "tcp"
+		if strings.HasSuffix(c.Client.Net, "tls") {
+			schema = "tls"
+		}
+	}
+
+	c.addr = fmt.Sprintf("%s://%s", schema, net.JoinHostPort(c.host, c.port))
+	return c.addr
 }
 
 func (c *client) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) {
 	var (
-		ip  net.IP
+		ip  netip.Addr
 		err error
 	)
 	if c.r == nil {
 		// a default ip dns
-		if ip = net.ParseIP(c.host); ip == nil {
+		if ip, err = netip.ParseAddr(c.host); err != nil {
 			return nil, fmt.Errorf("dns %s not a valid ip", c.host)
 		}
 	} else {
@@ -43,7 +64,7 @@ func (c *client) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) 
 		} else if len(ips) == 0 {
 			return nil, fmt.Errorf("%w: %s", resolver.ErrIPNotFound, c.host)
 		}
-		ip = ips[rand.Intn(len(ips))]
+		ip = ips[fastrand.Intn(len(ips))]
 	}
 
 	network := "udp"
@@ -51,15 +72,18 @@ func (c *client) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) 
 		network = "tcp"
 	}
 
-	options := []dialer.Option{}
+	var options []dialer.Option
 	if c.iface != "" {
 		options = append(options, dialer.WithInterface(c.iface))
 	}
-	conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), c.port), options...)
+
+	conn, err := getDialHandler(c.r, c.proxyAdapter, c.proxyName, options...)(ctx, network, net.JoinHostPort(ip.String(), c.port))
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	// miekg/dns ExchangeContext doesn't respond to context cancel.
 	// this is a workaround
@@ -70,7 +94,7 @@ func (c *client) ExchangeContext(ctx context.Context, m *D.Msg) (*D.Msg, error) 
 	ch := make(chan result, 1)
 	go func() {
 		if strings.HasSuffix(c.Client.Net, "tls") {
-			conn = tls.Client(conn, c.Client.TLSConfig)
+			conn = tls.Client(conn, ca.GetGlobalTLSConfig(c.Client.TLSConfig))
 		}
 
 		msg, _, err := c.Client.ExchangeWithConn(m, &D.Conn{

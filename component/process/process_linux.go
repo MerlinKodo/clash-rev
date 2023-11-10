@@ -4,15 +4,24 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"net"
 	"net/netip"
 	"os"
+	"path"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"unicode"
 	"unsafe"
-
-	"github.com/MerlinKodo/clash-rev/common/pool"
 
 	"github.com/mdlayher/netlink"
 	"golang.org/x/sys/unix"
+)
+
+const (
+	SOCK_DIAG_BY_FAMILY  = 20
+	inetDiagRequestSize  = int(unsafe.Sizeof(inetDiagRequest{}))
+	inetDiagResponseSize = int(unsafe.Sizeof(inetDiagResponse{}))
 )
 
 type inetDiagRequest struct {
@@ -50,74 +59,39 @@ type inetDiagResponse struct {
 	INode   uint32
 }
 
-func findProcessPath(network string, from netip.AddrPort, to netip.AddrPort) (string, error) {
-	inode, uid, err := resolveSocketByNetlink(network, from, to)
+func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
+	uid, inode, err := resolveSocketByNetlink(network, ip, srcPort)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 
-	return resolveProcessPathByProcSearch(inode, uid)
+	pp, err := resolveProcessNameByProcSearch(inode, uid)
+	return uid, pp, err
 }
 
-func resolveSocketByNetlink(network string, from netip.AddrPort, to netip.AddrPort) (inode uint32, uid uint32, err error) {
-	var families []byte
-	if from.Addr().Unmap().Is4() {
-		families = []byte{unix.AF_INET, unix.AF_INET6}
-	} else {
-		families = []byte{unix.AF_INET6, unix.AF_INET}
+func resolveSocketByNetlink(network string, ip netip.Addr, srcPort int) (uint32, uint32, error) {
+	request := &inetDiagRequest{
+		States: 0xffffffff,
+		Cookie: [2]uint32{0xffffffff, 0xffffffff},
 	}
 
-	var protocol byte
-	switch network {
-	case TCP:
-		protocol = unix.IPPROTO_TCP
-	case UDP:
-		protocol = unix.IPPROTO_UDP
-	default:
+	if ip.Is4() {
+		request.Family = unix.AF_INET
+	} else {
+		request.Family = unix.AF_INET6
+	}
+
+	if strings.HasPrefix(network, "tcp") {
+		request.Protocol = unix.IPPROTO_TCP
+	} else if strings.HasPrefix(network, "udp") {
+		request.Protocol = unix.IPPROTO_UDP
+	} else {
 		return 0, 0, ErrInvalidNetwork
 	}
 
-	if protocol == unix.IPPROTO_UDP {
-		// Swap from & to for udp
-		// See also https://www.mail-archive.com/netdev@vger.kernel.org/msg248638.html
-		from, to = to, from
-	}
+	copy(request.Src[:], ip.AsSlice())
 
-	for _, family := range families {
-		inode, uid, err = resolveSocketByNetlinkExact(family, protocol, from, to, netlink.Request)
-		if err == nil {
-			return inode, uid, err
-		}
-	}
-
-	return 0, 0, ErrNotFound
-}
-
-func resolveSocketByNetlinkExact(family byte, protocol byte, from netip.AddrPort, to netip.AddrPort, flags netlink.HeaderFlags) (inode uint32, uid uint32, err error) {
-	request := &inetDiagRequest{
-		Family:   family,
-		Protocol: protocol,
-		States:   0xffffffff,
-		Cookie:   [2]uint32{0xffffffff, 0xffffffff},
-	}
-
-	var (
-		fromAddr []byte
-		toAddr   []byte
-	)
-	if family == unix.AF_INET {
-		fromAddr = net.IP(from.Addr().AsSlice()).To4()
-		toAddr = net.IP(to.Addr().AsSlice()).To4()
-	} else {
-		fromAddr = net.IP(from.Addr().AsSlice()).To16()
-		toAddr = net.IP(to.Addr().AsSlice()).To16()
-	}
-
-	copy(request.Src[:], fromAddr)
-	copy(request.Dst[:], toAddr)
-
-	binary.BigEndian.PutUint16(request.SrcPort[:], from.Port())
-	binary.BigEndian.PutUint16(request.DstPort[:], to.Port())
+	binary.BigEndian.PutUint16(request.SrcPort[:], uint16(srcPort))
 
 	conn, err := netlink.Dial(unix.NETLINK_INET_DIAG, nil)
 	if err != nil {
@@ -127,10 +101,10 @@ func resolveSocketByNetlinkExact(family byte, protocol byte, from netip.AddrPort
 
 	message := netlink.Message{
 		Header: netlink.Header{
-			Type:  20, // SOCK_DIAG_BY_FAMILY
-			Flags: flags,
+			Type:  SOCK_DIAG_BY_FAMILY,
+			Flags: netlink.Request | netlink.Dump,
 		},
-		Data: (*(*[unsafe.Sizeof(*request)]byte)(unsafe.Pointer(request)))[:],
+		Data: (*(*[inetDiagRequestSize]byte)(unsafe.Pointer(request)))[:],
 	}
 
 	messages, err := conn.Execute(message)
@@ -139,94 +113,89 @@ func resolveSocketByNetlinkExact(family byte, protocol byte, from netip.AddrPort
 	}
 
 	for _, msg := range messages {
-		if len(msg.Data) < int(unsafe.Sizeof(inetDiagResponse{})) {
+		if len(msg.Data) < inetDiagResponseSize {
 			continue
 		}
 
 		response := (*inetDiagResponse)(unsafe.Pointer(&msg.Data[0]))
 
-		return response.INode, response.UID, nil
+		return response.UID, response.INode, nil
 	}
 
 	return 0, 0, ErrNotFound
 }
 
-func resolveProcessPathByProcSearch(inode, uid uint32) (string, error) {
-	procDir, err := os.Open("/proc")
-	if err != nil {
-		return "", err
-	}
-	defer procDir.Close()
-
-	pids, err := procDir.Readdirnames(-1)
+func resolveProcessNameByProcSearch(inode, uid uint32) (string, error) {
+	files, err := os.ReadDir("/proc")
 	if err != nil {
 		return "", err
 	}
 
-	expectedSocketName := fmt.Appendf(nil, "socket:[%d]", inode)
+	buffer := make([]byte, unix.PathMax)
+	socket := fmt.Appendf(nil, "socket:[%d]", inode)
 
-	pathBuffer := pool.Get(64)
-	defer pool.Put(pathBuffer)
-
-	readlinkBuffer := pool.Get(32)
-	defer pool.Put(readlinkBuffer)
-
-	copy(pathBuffer, "/proc/")
-
-	for _, pid := range pids {
-		if !isPid(pid) {
+	for _, f := range files {
+		if !f.IsDir() || !isPid(f.Name()) {
 			continue
 		}
 
-		pathBuffer = append(pathBuffer[:len("/proc/")], pid...)
-
-		stat := &unix.Stat_t{}
-		err = unix.Stat(string(pathBuffer), stat)
+		info, err := f.Info()
 		if err != nil {
-			continue
-		} else if stat.Uid != uid {
+			return "", err
+		}
+		if info.Sys().(*syscall.Stat_t).Uid != uid {
 			continue
 		}
 
-		pathBuffer = append(pathBuffer, "/fd/"...)
-		fdsPrefixLength := len(pathBuffer)
+		processPath := filepath.Join("/proc", f.Name())
+		fdPath := filepath.Join(processPath, "fd")
 
-		fdDir, err := os.Open(string(pathBuffer))
-		if err != nil {
-			continue
-		}
-
-		fds, err := fdDir.Readdirnames(-1)
-		fdDir.Close()
+		fds, err := os.ReadDir(fdPath)
 		if err != nil {
 			continue
 		}
 
 		for _, fd := range fds {
-			pathBuffer = pathBuffer[:fdsPrefixLength]
-
-			pathBuffer = append(pathBuffer, fd...)
-
-			n, err := unix.Readlink(string(pathBuffer), readlinkBuffer)
+			n, err := unix.Readlink(filepath.Join(fdPath, fd.Name()), buffer)
 			if err != nil {
 				continue
 			}
+			if runtime.GOOS == "android" {
+				if bytes.Equal(buffer[:n], socket) {
+					cmdline, err := os.ReadFile(path.Join(processPath, "cmdline"))
+					if err != nil {
+						return "", err
+					}
 
-			if bytes.Equal(readlinkBuffer[:n], expectedSocketName) {
-				return os.Readlink("/proc/" + pid + "/exe")
+					return splitCmdline(cmdline), nil
+				}
+			} else {
+				if bytes.Equal(buffer[:n], socket) {
+					return os.Readlink(filepath.Join(processPath, "exe"))
+				}
 			}
+
 		}
 	}
 
-	return "", fmt.Errorf("inode %d of uid %d not found", inode, uid)
+	return "", fmt.Errorf("process of uid(%d),inode(%d) not found", uid, inode)
 }
 
-func isPid(name string) bool {
-	for _, c := range name {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
+func splitCmdline(cmdline []byte) string {
+	cmdline = bytes.Trim(cmdline, " ")
 
-	return true
+	idx := bytes.IndexFunc(cmdline, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || r == ':'
+	})
+
+	if idx == -1 {
+		return filepath.Base(string(cmdline))
+	}
+	return filepath.Base(string(cmdline[:idx]))
+}
+
+func isPid(s string) bool {
+	return strings.IndexFunc(s, func(r rune) bool {
+		return !unicode.IsDigit(r)
+	}) == -1
 }

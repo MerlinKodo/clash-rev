@@ -14,8 +14,8 @@ import (
 	"github.com/MerlinKodo/clash-rev/log"
 )
 
-func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
-	client := newClient(c.RemoteAddr(), c.LocalAddr(), in)
+func HandleConn(c net.Conn, tunnel C.Tunnel, cache *cache.LruCache[string, bool], additions ...inbound.Addition) {
+	client := newClient(c, tunnel, additions...)
 	defer client.CloseIdleConnections()
 
 	conn := N.NewBufferedConn(c)
@@ -48,7 +48,7 @@ func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
 					break // close connection
 				}
 
-				in <- inbound.NewHTTPS(request, conn)
+				tunnel.HandleTCPConn(inbound.NewHTTPS(request, conn, additions...))
 
 				return // hijack connection
 			}
@@ -61,7 +61,7 @@ func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
 			request.RequestURI = ""
 
 			if isUpgradeRequest(request) {
-				handleUpgrade(conn, request, in)
+				handleUpgrade(conn, request, tunnel, additions...)
 
 				return // hijack connection
 			}
@@ -95,11 +95,14 @@ func HandleConn(c net.Conn, in chan<- C.ConnContext, cache *cache.LruCache) {
 		}
 	}
 
-	conn.Close()
+	_ = conn.Close()
 }
 
-func authenticate(request *http.Request, cache *cache.LruCache) *http.Response {
+func authenticate(request *http.Request, cache *cache.LruCache[string, bool]) *http.Response {
 	authenticator := authStore.Authenticator()
+	if inbound.SkipAuthRemoteAddress(request.RemoteAddr) {
+		authenticator = nil
+	}
 	if authenticator != nil {
 		credential := parseBasicProxyAuthorization(request)
 		if credential == "" {
@@ -114,7 +117,7 @@ func authenticate(request *http.Request, cache *cache.LruCache) *http.Response {
 			authed = err == nil && authenticator.Verify(user, pass)
 			cache.Set(credential, authed)
 		}
-		if !authed.(bool) {
+		if !authed {
 			log.Infoln("Auth failed from %s", request.RemoteAddr)
 
 			return responseWith(request, http.StatusForbidden)

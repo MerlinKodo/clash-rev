@@ -3,22 +3,27 @@ package route
 import (
 	"bytes"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
-	"unsafe"
 
+	"github.com/MerlinKodo/clash-rev/adapter/inbound"
+	CN "github.com/MerlinKodo/clash-rev/common/net"
+	"github.com/MerlinKodo/clash-rev/common/utils"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/log"
 	"github.com/MerlinKodo/clash-rev/tunnel/statistic"
 
-	"github.com/MerlinKodo/protobytes"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/go-chi/render"
-	"github.com/gorilla/websocket"
+	"github.com/gobwas/ws"
+	"github.com/gobwas/ws/wsutil"
 )
 
 var (
@@ -26,12 +31,6 @@ var (
 	serverAddr   = ""
 
 	uiPath = ""
-
-	upgrader = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
 )
 
 type Traffic struct {
@@ -39,11 +38,17 @@ type Traffic struct {
 	Down int64 `json:"down"`
 }
 
+type Memory struct {
+	Inuse   uint64 `json:"inuse"`
+	OSLimit uint64 `json:"oslimit"` // maybe we need it in the future
+}
+
 func SetUIPath(path string) {
 	uiPath = C.Path.Resolve(path)
 }
 
-func Start(addr string, secret string) {
+func Start(addr string, tlsAddr string, secret string,
+	certificat, privateKey string, isDebug bool) {
 	if serverAddr != "" {
 		return
 	}
@@ -52,29 +57,43 @@ func Start(addr string, secret string) {
 	serverSecret = secret
 
 	r := chi.NewRouter()
-
-	cors := cors.New(cors.Options{
+	corsM := cors.New(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE"},
 		AllowedHeaders: []string{"Content-Type", "Authorization"},
 		MaxAge:         300,
 	})
-
-	r.Use(cors.Handler)
+	r.Use(corsM.Handler)
+	if isDebug {
+		r.Mount("/debug", func() http.Handler {
+			r := chi.NewRouter()
+			r.Put("/gc", func(w http.ResponseWriter, r *http.Request) {
+				debug.FreeOSMemory()
+			})
+			handler := middleware.Profiler
+			r.Mount("/", handler())
+			return r
+		}())
+	}
 	r.Group(func(r chi.Router) {
 		r.Use(authentication)
-
 		r.Get("/", hello)
 		r.Get("/logs", getLogs)
 		r.Get("/traffic", traffic)
+		r.Get("/memory", memory)
 		r.Get("/version", version)
 		r.Mount("/configs", configRouter())
-		r.Mount("/inbounds", inboundRouter())
 		r.Mount("/proxies", proxyRouter())
+		r.Mount("/group", GroupRouter())
 		r.Mount("/rules", ruleRouter())
 		r.Mount("/connections", connectionRouter())
 		r.Mount("/providers/proxies", proxyProviderRouter())
+		r.Mount("/providers/rules", ruleProviderRouter())
+		r.Mount("/cache", cacheRouter())
 		r.Mount("/dns", dnsRouter())
+		r.Mount("/restart", restartRouter())
+		r.Mount("/upgrade", upgradeRouter())
+
 	})
 
 	if uiPath != "" {
@@ -87,21 +106,51 @@ func Start(addr string, secret string) {
 		})
 	}
 
-	l, err := net.Listen("tcp", addr)
+	if len(tlsAddr) > 0 {
+		go func() {
+			c, err := CN.ParseCert(certificat, privateKey, C.Path)
+			if err != nil {
+				log.Errorln("External controller tls listen error: %s", err)
+				return
+			}
+
+			l, err := inbound.Listen("tcp", tlsAddr)
+			if err != nil {
+				log.Errorln("External controller tls listen error: %s", err)
+				return
+			}
+
+			serverAddr = l.Addr().String()
+			log.Infoln("RESTful API tls listening at: %s", serverAddr)
+			tlsServe := &http.Server{
+				Handler: r,
+				TLSConfig: &tls.Config{
+					Certificates: []tls.Certificate{c},
+				},
+			}
+			if err = tlsServe.ServeTLS(l, "", ""); err != nil {
+				log.Errorln("External controller tls serve error: %s", err)
+			}
+		}()
+	}
+
+	l, err := inbound.Listen("tcp", addr)
 	if err != nil {
 		log.Errorln("External controller listen error: %s", err)
 		return
 	}
 	serverAddr = l.Addr().String()
 	log.Infoln("RESTful API listening at: %s", serverAddr)
+
 	if err = http.Serve(l, r); err != nil {
 		log.Errorln("External controller serve error: %s", err)
 	}
+
 }
 
 func safeEuqal(a, b string) bool {
-	aBuf := unsafe.Slice(unsafe.StringData(a), len(a))
-	bBuf := unsafe.Slice(unsafe.StringData(b), len(b))
+	aBuf := utils.ImmutableBytesFromString(a)
+	bBuf := utils.ImmutableBytesFromString(b)
 	return subtle.ConstantTimeCompare(aBuf, bBuf) == 1
 }
 
@@ -113,7 +162,7 @@ func authentication(next http.Handler) http.Handler {
 		}
 
 		// Browser websocket not support custom header
-		if websocket.IsWebSocketUpgrade(r) && r.URL.Query().Get("token") != "" {
+		if r.Header.Get("Upgrade") == "websocket" && r.URL.Query().Get("token") != "" {
 			token := r.URL.Query().Get("token")
 			if !safeEuqal(token, serverSecret) {
 				render.Status(r, http.StatusUnauthorized)
@@ -140,14 +189,14 @@ func authentication(next http.Handler) http.Handler {
 }
 
 func hello(w http.ResponseWriter, r *http.Request) {
-	render.JSON(w, r, render.M{"hello": "clash"})
+	render.JSON(w, r, render.M{"hello": "clash.rev"})
 }
 
 func traffic(w http.ResponseWriter, r *http.Request) {
-	var wsConn *websocket.Conn
-	if websocket.IsWebSocketUpgrade(r) {
+	var wsConn net.Conn
+	if r.Header.Get("Upgrade") == "websocket" {
 		var err error
-		wsConn, err = upgrader.Upgrade(w, r, nil)
+		wsConn, _, _, err = ws.UpgradeHTTP(r, w)
 		if err != nil {
 			return
 		}
@@ -161,12 +210,12 @@ func traffic(w http.ResponseWriter, r *http.Request) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	t := statistic.DefaultManager
-	buf := protobytes.BytesWriter{}
+	buf := &bytes.Buffer{}
 	var err error
 	for range tick.C {
 		buf.Reset()
 		up, down := t.Now()
-		if err := json.NewEncoder(&buf).Encode(Traffic{
+		if err := json.NewEncoder(buf).Encode(Traffic{
 			Up:   up,
 			Down: down,
 		}); err != nil {
@@ -177,7 +226,57 @@ func traffic(w http.ResponseWriter, r *http.Request) {
 			_, err = w.Write(buf.Bytes())
 			w.(http.Flusher).Flush()
 		} else {
-			err = wsConn.WriteMessage(websocket.TextMessage, buf.Bytes())
+			err = wsutil.WriteMessage(wsConn, ws.StateServerSide, ws.OpText, buf.Bytes())
+		}
+
+		if err != nil {
+			break
+		}
+	}
+}
+
+func memory(w http.ResponseWriter, r *http.Request) {
+	var wsConn net.Conn
+	if r.Header.Get("Upgrade") == "websocket" {
+		var err error
+		wsConn, _, _, err = ws.UpgradeHTTP(r, w)
+		if err != nil {
+			return
+		}
+	}
+
+	if wsConn == nil {
+		w.Header().Set("Content-Type", "application/json")
+		render.Status(r, http.StatusOK)
+	}
+
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	t := statistic.DefaultManager
+	buf := &bytes.Buffer{}
+	var err error
+	first := true
+	for range tick.C {
+		buf.Reset()
+
+		inuse := t.Memory()
+		// make chat.js begin with zero
+		// this is shit var,but we need output 0 for first time
+		if first {
+			inuse = 0
+			first = false
+		}
+		if err := json.NewEncoder(buf).Encode(Memory{
+			Inuse:   inuse,
+			OSLimit: 0,
+		}); err != nil {
+			break
+		}
+		if wsConn == nil {
+			_, err = w.Write(buf.Bytes())
+			w.(http.Flusher).Flush()
+		} else {
+			err = wsutil.WriteMessage(wsConn, ws.StateServerSide, ws.OpText, buf.Bytes())
 		}
 
 		if err != nil {
@@ -190,7 +289,6 @@ type Log struct {
 	Type    string `json:"type"`
 	Payload string `json:"payload"`
 }
-
 type LogStructuredField struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -221,10 +319,10 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var wsConn *websocket.Conn
-	if websocket.IsWebSocketUpgrade(r) {
+	var wsConn net.Conn
+	if r.Header.Get("Upgrade") == "websocket" {
 		var err error
-		wsConn, err = upgrader.Upgrade(w, r, nil)
+		wsConn, _, _, err = ws.UpgradeHTTP(r, w)
 		if err != nil {
 			return
 		}
@@ -283,7 +381,7 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 			_, err = w.Write(buf.Bytes())
 			w.(http.Flusher).Flush()
 		} else {
-			err = wsConn.WriteMessage(websocket.TextMessage, buf.Bytes())
+			err = wsutil.WriteMessage(wsConn, ws.StateServerSide, ws.OpText, buf.Bytes())
 		}
 
 		if err != nil {
@@ -293,5 +391,5 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func version(w http.ResponseWriter, r *http.Request) {
-	render.JSON(w, r, render.M{"rev": C.Rev, "version": C.Version})
+	render.JSON(w, r, render.M{"meta": C.Meta, "version": C.Version})
 }

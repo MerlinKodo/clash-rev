@@ -1,11 +1,13 @@
-//go:build !darwin && !linux && !windows && !freebsd
+//go:build !darwin && !linux && !windows && (!freebsd || !amd64)
 
 package process
 
-import (
-	"net/netip"
-)
+import "net/netip"
 
-func findProcessPath(_ string, _, _ netip.AddrPort) (string, error) {
-	return "", ErrPlatformNotSupport
+func findProcessName(network string, ip netip.Addr, srcPort int) (uint32, string, error) {
+	return 0, "", ErrPlatformNotSupport
+}
+
+func resolveSocketByNetlink(network string, ip netip.Addr, srcPort int) (uint32, uint32, error) {
+	return 0, 0, ErrPlatformNotSupport
 }

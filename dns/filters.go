@@ -1,31 +1,54 @@
 package dns
 
 import (
-	"net"
+	"net/netip"
 	"strings"
 
+	"github.com/MerlinKodo/clash-rev/component/geodata"
+	"github.com/MerlinKodo/clash-rev/component/geodata/router"
 	"github.com/MerlinKodo/clash-rev/component/mmdb"
 	"github.com/MerlinKodo/clash-rev/component/trie"
+	C "github.com/MerlinKodo/clash-rev/constant"
+	"github.com/MerlinKodo/clash-rev/log"
 )
 
 type fallbackIPFilter interface {
-	Match(net.IP) bool
+	Match(netip.Addr) bool
 }
 
 type geoipFilter struct {
 	code string
 }
 
-func (gf *geoipFilter) Match(ip net.IP) bool {
-	record, _ := mmdb.Instance().Country(ip)
-	return !strings.EqualFold(record.Country.IsoCode, gf.code) && !ip.IsPrivate()
+var geoIPMatcher *router.GeoIPMatcher
+
+func (gf *geoipFilter) Match(ip netip.Addr) bool {
+	if !C.GeodataMode {
+		codes := mmdb.Instance().LookupCode(ip.AsSlice())
+		for _, code := range codes {
+			if !strings.EqualFold(code, gf.code) && !ip.IsPrivate() {
+				return true
+			}
+		}
+		return false
+	}
+
+	if geoIPMatcher == nil {
+		var err error
+		geoIPMatcher, _, err = geodata.LoadGeoIPMatcher("CN")
+		if err != nil {
+			log.Errorln("[GeoIPFilter] LoadGeoIPMatcher error: %s", err.Error())
+			return false
+		}
+	}
+	return !geoIPMatcher.Match(ip.AsSlice())
 }
 
 type ipnetFilter struct {
-	ipnet *net.IPNet
+	ipnet netip.Prefix
 }
 
-func (inf *ipnetFilter) Match(ip net.IP) bool {
+func (inf *ipnetFilter) Match(ip netip.Addr) bool {
 	return inf.ipnet.Contains(ip)
 }
 
@@ -34,17 +57,46 @@ type fallbackDomainFilter interface {
 }
 
 type domainFilter struct {
-	tree *trie.DomainTrie
+	tree *trie.DomainTrie[struct{}]
 }
 
 func NewDomainFilter(domains []string) *domainFilter {
-	df := domainFilter{tree: trie.New()}
+	df := domainFilter{tree: trie.New[struct{}]()}
 	for _, domain := range domains {
-		df.tree.Insert(domain, "")
+		_ = df.tree.Insert(domain, struct{}{})
 	}
+	df.tree.Optimize()
 	return &df
 }
 
 func (df *domainFilter) Match(domain string) bool {
 	return df.tree.Search(domain) != nil
+}
+
+type geoSiteFilter struct {
+	matchers []*router.DomainMatcher
+}
+
+func NewGeoSite(group string) (fallbackDomainFilter, error) {
+	if err := geodata.InitGeoSite(); err != nil {
+		log.Errorln("can't initial GeoSite: %s", err)
+		return nil, err
+	}
+	matcher, _, err := geodata.LoadGeoSiteMatcher(group)
+	if err != nil {
+		return nil, err
+	}
+	filter := &geoSiteFilter{
+		matchers: []*router.DomainMatcher{matcher},
+	}
+	return filter, nil
+}
+
+func (gsf *geoSiteFilter) Match(domain string) bool {
+	for _, matcher := range gsf.matchers {
+		if matcher.ApplyDomain(domain) {
+			return true
+		}
+	}
+	return false
 }

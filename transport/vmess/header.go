@@ -1,6 +1,7 @@
 package vmess
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -10,8 +11,6 @@ import (
 	"hash"
 	"hash/crc32"
 	"time"
-
-	"github.com/MerlinKodo/protobytes"
 )
 
 const (
@@ -50,11 +49,14 @@ func (h *hMacCreator) Create() hash.Hash {
 }
 
 func createAuthID(cmdKey []byte, time int64) [16]byte {
-	buf := protobytes.BytesWriter{}
-	buf.PutUint64be(uint64(time))
-	buf.ReadFull(rand.Reader, 4)
+	buf := &bytes.Buffer{}
+	binary.Write(buf, binary.BigEndian, time)
+
+	random := make([]byte, 4)
+	rand.Read(random)
+	buf.Write(random)
 	zero := crc32.ChecksumIEEE(buf.Bytes())
-	buf.PutUint32be(zero)
+	binary.Write(buf, binary.BigEndian, zero)
 
 	aesBlock, _ := aes.NewCipher(kdf(cmdKey[:], kdfSaltConstAuthIDEncryptionKey)[:16])
 	var result [16]byte
@@ -90,12 +92,12 @@ func sealVMessAEADHeader(key [16]byte, data []byte, t time.Time) []byte {
 		payloadHeaderAEADEncrypted = payloadHeaderAEAD.Seal(nil, payloadHeaderAEADNonce, data, generatedAuthID[:])
 	}
 
-	outputBuffer := protobytes.BytesWriter{}
+	outputBuffer := &bytes.Buffer{}
 
-	outputBuffer.PutSlice(generatedAuthID[:])
-	outputBuffer.PutSlice(payloadHeaderLengthAEADEncrypted)
-	outputBuffer.PutSlice(connectionNonce)
-	outputBuffer.PutSlice(payloadHeaderAEADEncrypted)
+	outputBuffer.Write(generatedAuthID[:])
+	outputBuffer.Write(payloadHeaderLengthAEADEncrypted)
+	outputBuffer.Write(connectionNonce)
+	outputBuffer.Write(payloadHeaderAEADEncrypted)
 
 	return outputBuffer.Bytes()
 }

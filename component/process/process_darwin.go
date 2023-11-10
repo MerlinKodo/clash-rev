@@ -33,7 +33,7 @@ var structSize = func() int {
 	}
 }()
 
-func findProcessPath(network string, from netip.AddrPort, _ netip.AddrPort) (string, error) {
+func findProcessName(network string, ip netip.Addr, port int) (uint32, string, error) {
 	var spath string
 	switch network {
 	case TCP:
@@ -41,14 +41,14 @@ func findProcessPath(network string, from netip.AddrPort, _ netip.AddrPort) (str
 	case UDP:
 		spath = "net.inet.udp.pcblist_n"
 	default:
-		return "", ErrInvalidNetwork
+		return 0, "", ErrInvalidNetwork
 	}
 
-	isIPv4 := from.Addr().Is4()
+	isIPv4 := ip.Is4()
 
 	value, err := syscall.Sysctl(spath)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 
 	buf := []byte(value)
@@ -65,39 +65,34 @@ func findProcessPath(network string, from netip.AddrPort, _ netip.AddrPort) (str
 		inp, so := i, i+104
 
 		srcPort := binary.BigEndian.Uint16(buf[inp+18 : inp+20])
-		if from.Port() != srcPort {
+		if uint16(port) != srcPort {
 			continue
 		}
-
-		// FIXME: add dstPort check
 
 		// xinpcb_n.inp_vflag
 		flag := buf[inp+44]
 
 		var (
 			srcIP     netip.Addr
-			srcIPOk   bool
 			srcIsIPv4 bool
 		)
 		switch {
 		case flag&0x1 > 0 && isIPv4:
 			// ipv4
-			srcIP, srcIPOk = netip.AddrFromSlice(buf[inp+76 : inp+80])
+			srcIP, _ = netip.AddrFromSlice(buf[inp+76 : inp+80])
 			srcIsIPv4 = true
 		case flag&0x2 > 0 && !isIPv4:
 			// ipv6
-			srcIP, srcIPOk = netip.AddrFromSlice(buf[inp+64 : inp+80])
+			srcIP, _ = netip.AddrFromSlice(buf[inp+64 : inp+80])
 		default:
 			continue
 		}
-		if !srcIPOk {
-			continue
-		}
 
-		if from.Addr() == srcIP { // FIXME: add dstIP check
+		if ip == srcIP {
 			// xsocket_n.so_last_pid
 			pid := readNativeUint32(buf[so+68 : so+72])
-			return getExecPathFromPID(pid)
+			pp, err := getExecPathFromPID(pid)
+			return 0, pp, err
 		}
 
 		// udp packet connection may be not equal with srcIP
@@ -107,10 +102,10 @@ func findProcessPath(network string, from netip.AddrPort, _ netip.AddrPort) (str
 	}
 
 	if network == UDP && fallbackUDPProcess != "" {
-		return fallbackUDPProcess, nil
+		return 0, fallbackUDPProcess, nil
 	}
 
-	return "", ErrNotFound
+	return 0, "", ErrNotFound
 }
 
 func getExecPathFromPID(pid uint32) (string, error) {

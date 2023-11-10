@@ -17,9 +17,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/MerlinKodo/clash-rev/common/atomic"
+	"github.com/MerlinKodo/clash-rev/common/buf"
 	"github.com/MerlinKodo/clash-rev/common/pool"
+	tlsC "github.com/MerlinKodo/clash-rev/component/tls"
 
-	"go.uber.org/atomic"
 	"golang.org/x/net/http2"
 )
 
@@ -38,21 +40,21 @@ type DialFn = func(network, addr string) (net.Conn, error)
 type Conn struct {
 	response  *http.Response
 	request   *http.Request
-	transport *http2.Transport
+	transport *TransportWrap
 	writer    *io.PipeWriter
 	once      sync.Once
-	close     *atomic.Bool
+	close     atomic.Bool
 	err       error
 	remain    int
 	br        *bufio.Reader
-
 	// deadlines
 	deadline *time.Timer
 }
 
 type Config struct {
-	ServiceName string
-	Host        string
+	ServiceName       string
+	Host              string
+	ClientFingerprint string
 }
 
 func (g *Conn) initRequest() {
@@ -122,15 +124,15 @@ func (g *Conn) Read(b []byte) (n int, err error) {
 func (g *Conn) Write(b []byte) (n int, err error) {
 	protobufHeader := [binary.MaxVarintLen64 + 1]byte{0x0A}
 	varuintSize := binary.PutUvarint(protobufHeader[1:], uint64(len(b)))
-	grpcHeader := make([]byte, 5)
+	var grpcHeader [5]byte
 	grpcPayloadLen := uint32(varuintSize + 1 + len(b))
 	binary.BigEndian.PutUint32(grpcHeader[1:5], grpcPayloadLen)
 
-	buf := pool.GetBytesBuffer()
-	defer pool.PutBytesBuffer(buf)
-	buf.PutSlice(grpcHeader)
-	buf.PutSlice(protobufHeader[:varuintSize+1])
-	buf.PutSlice(b)
+	buf := pool.GetBuffer()
+	defer pool.PutBuffer(buf)
+	buf.Write(grpcHeader[:])
+	buf.Write(protobufHeader[:varuintSize+1])
+	buf.Write(b)
 
 	_, err = g.writer.Write(buf.Bytes())
 	if err == io.ErrClosedPipe && g.err != nil {
@@ -138,6 +140,29 @@ func (g *Conn) Write(b []byte) (n int, err error) {
 	}
 
 	return len(b), err
+}
+
+func (g *Conn) WriteBuffer(buffer *buf.Buffer) error {
+	defer buffer.Release()
+	dataLen := buffer.Len()
+	varLen := UVarintLen(uint64(dataLen))
+	header := buffer.ExtendHeader(6 + varLen)
+	_ = header[6] // bounds check hint to compiler
+	header[0] = 0x00
+	binary.BigEndian.PutUint32(header[1:5], uint32(1+varLen+dataLen))
+	header[5] = 0x0A
+	binary.PutUvarint(header[6:], uint64(dataLen))
+	_, err := g.writer.Write(buffer.Bytes())
+
+	if err == io.ErrClosedPipe && g.err != nil {
+		err = g.err
+	}
+
+	return err
+}
+
+func (g *Conn) FrontHeadroom() int {
+	return 6 + binary.MaxVarintLen64
 }
 
 func (g *Conn) Close() error {
@@ -149,8 +174,8 @@ func (g *Conn) Close() error {
 	return g.writer.Close()
 }
 
-func (g *Conn) LocalAddr() net.Addr                { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
-func (g *Conn) RemoteAddr() net.Addr               { return &net.TCPAddr{IP: net.IPv4zero, Port: 0} }
+func (g *Conn) LocalAddr() net.Addr                { return g.transport.LocalAddr() }
+func (g *Conn) RemoteAddr() net.Addr               { return g.transport.RemoteAddr() }
 func (g *Conn) SetReadDeadline(t time.Time) error  { return g.SetDeadline(t) }
 func (g *Conn) SetWriteDeadline(t time.Time) error { return g.SetDeadline(t) }
 
@@ -166,36 +191,78 @@ func (g *Conn) SetDeadline(t time.Time) error {
 	return nil
 }
 
-func NewHTTP2Client(dialFn DialFn, tlsConfig *tls.Config) *http2.Transport {
+func NewHTTP2Client(dialFn DialFn, tlsConfig *tls.Config, Fingerprint string, realityConfig *tlsC.RealityConfig) *TransportWrap {
+	wrap := TransportWrap{}
+
 	dialFunc := func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
 		pconn, err := dialFn(network, addr)
 		if err != nil {
 			return nil, err
 		}
+		wrap.remoteAddr = pconn.RemoteAddr()
 
-		cn := tls.Client(pconn, cfg)
-		if err := cn.HandshakeContext(ctx); err != nil {
+		if tlsConfig == nil {
+			return pconn, nil
+		}
+
+		if len(Fingerprint) != 0 {
+			if realityConfig == nil {
+				if fingerprint, exists := tlsC.GetFingerprint(Fingerprint); exists {
+					utlsConn := tlsC.UClient(pconn, cfg, fingerprint)
+					if err := utlsConn.HandshakeContext(ctx); err != nil {
+						pconn.Close()
+						return nil, err
+					}
+					state := utlsConn.ConnectionState()
+					if p := state.NegotiatedProtocol; p != http2.NextProtoTLS {
+						utlsConn.Close()
+						return nil, fmt.Errorf("http2: unexpected ALPN protocol %s, want %s", p, http2.NextProtoTLS)
+					}
+					return utlsConn, nil
+				}
+			} else {
+				realityConn, err := tlsC.GetRealityConn(ctx, pconn, Fingerprint, cfg, realityConfig)
+				if err != nil {
+					pconn.Close()
+					return nil, err
+				}
+				//state := realityConn.(*utls.UConn).ConnectionState()
+				//if p := state.NegotiatedProtocol; p != http2.NextProtoTLS {
+				//	realityConn.Close()
+				//	return nil, fmt.Errorf("http2: unexpected ALPN protocol %s, want %s", p, http2.NextProtoTLS)
+				//}
+				return realityConn, nil
+			}
+		}
+		if realityConfig != nil {
+			return nil, errors.New("REALITY is based on uTLS, please set a client-fingerprint")
+		}
+
+		conn := tls.Client(pconn, cfg)
+		if err := conn.HandshakeContext(ctx); err != nil {
 			pconn.Close()
 			return nil, err
 		}
-		state := cn.ConnectionState()
+		state := conn.ConnectionState()
 		if p := state.NegotiatedProtocol; p != http2.NextProtoTLS {
-			cn.Close()
+			conn.Close()
 			return nil, fmt.Errorf("http2: unexpected ALPN protocol %s, want %s", p, http2.NextProtoTLS)
 		}
-		return cn, nil
+		return conn, nil
 	}
 
-	return &http2.Transport{
+	wrap.Transport = &http2.Transport{
 		DialTLSContext:     dialFunc,
 		TLSClientConfig:    tlsConfig,
 		AllowHTTP:          false,
 		DisableCompression: true,
 		PingTimeout:        0,
 	}
+
+	return &wrap
 }
 
-func StreamGunWithTransport(transport *http2.Transport, cfg *Config) (net.Conn, error) {
+func StreamGunWithTransport(transport *TransportWrap, cfg *Config) (net.Conn, error) {
 	serviceName := "GunService"
 	if cfg.ServiceName != "" {
 		serviceName = cfg.ServiceName
@@ -229,11 +296,11 @@ func StreamGunWithTransport(transport *http2.Transport, cfg *Config) (net.Conn, 
 	return conn, nil
 }
 
-func StreamGunWithConn(conn net.Conn, tlsConfig *tls.Config, cfg *Config) (net.Conn, error) {
+func StreamGunWithConn(conn net.Conn, tlsConfig *tls.Config, cfg *Config, realityConfig *tlsC.RealityConfig) (net.Conn, error) {
 	dialFn := func(network, addr string) (net.Conn, error) {
 		return conn, nil
 	}
 
-	transport := NewHTTP2Client(dialFn, tlsConfig)
+	transport := NewHTTP2Client(dialFn, tlsConfig, cfg.ClientFingerprint, realityConfig)
 	return StreamGunWithTransport(transport, cfg)
 }

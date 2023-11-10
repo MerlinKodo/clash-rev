@@ -1,7 +1,7 @@
 package constant
 
 var (
-	Rev       = true
+	Meta      = true
 	Version   = "unknown version"
 	BuildTime = "unknown time"
 	ClashName = "clash.rev"

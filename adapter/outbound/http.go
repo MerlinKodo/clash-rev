@@ -7,13 +7,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 
+	N "github.com/MerlinKodo/clash-rev/common/net"
+	"github.com/MerlinKodo/clash-rev/component/ca"
 	"github.com/MerlinKodo/clash-rev/component/dialer"
+	"github.com/MerlinKodo/clash-rev/component/proxydialer"
 	C "github.com/MerlinKodo/clash-rev/constant"
 )
 
@@ -22,7 +25,7 @@ type Http struct {
 	user      string
 	pass      string
 	tlsConfig *tls.Config
-	Headers   http.Header
+	option    *HttpOption
 }
 
 type HttpOption struct {
@@ -35,15 +38,14 @@ type HttpOption struct {
 	TLS            bool              `proxy:"tls,omitempty"`
 	SNI            string            `proxy:"sni,omitempty"`
 	SkipCertVerify bool              `proxy:"skip-cert-verify,omitempty"`
+	Fingerprint    string            `proxy:"fingerprint,omitempty"`
 	Headers        map[string]string `proxy:"headers,omitempty"`
 }
 
-// StreamConn implements C.ProxyAdapter
-func (h *Http) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
+// StreamConnContext implements C.ProxyAdapter
+func (h *Http) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 	if h.tlsConfig != nil {
 		cc := tls.Client(c, h.tlsConfig)
-		ctx, cancel := context.WithTimeout(context.Background(), C.DefaultTLSTimeout)
-		defer cancel()
 		err := cc.HandshakeContext(ctx)
 		c = cc
 		if err != nil {
@@ -59,17 +61,28 @@ func (h *Http) StreamConn(c net.Conn, metadata *C.Metadata) (net.Conn, error) {
 
 // DialContext implements C.ProxyAdapter
 func (h *Http) DialContext(ctx context.Context, metadata *C.Metadata, opts ...dialer.Option) (_ C.Conn, err error) {
-	c, err := dialer.DialContext(ctx, "tcp", h.addr, h.Base.DialOptions(opts...)...)
+	return h.DialContextWithDialer(ctx, dialer.NewDialer(h.Base.DialOptions(opts...)...), metadata)
+}
+
+// DialContextWithDialer implements C.ProxyAdapter
+func (h *Http) DialContextWithDialer(ctx context.Context, dialer C.Dialer, metadata *C.Metadata) (_ C.Conn, err error) {
+	if len(h.option.DialerProxy) > 0 {
+		dialer, err = proxydialer.NewByName(h.option.DialerProxy, dialer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	c, err := dialer.DialContext(ctx, "tcp", h.addr)
 	if err != nil {
 		return nil, fmt.Errorf("%s connect error: %w", h.addr, err)
 	}
-	tcpKeepAlive(c)
+	N.TCPKeepAlive(c)
 
 	defer func(c net.Conn) {
 		safeConnClose(c, err)
 	}(c)
 
-	c, err = h.StreamConn(c, metadata)
+	c, err = h.StreamConnContext(ctx, c, metadata)
 	if err != nil {
 		return nil, err
 	}
@@ -77,29 +90,43 @@ func (h *Http) DialContext(ctx context.Context, metadata *C.Metadata, opts ...di
 	return NewConn(c, h), nil
 }
 
+// SupportWithDialer implements C.ProxyAdapter
+func (h *Http) SupportWithDialer() C.NetWork {
+	return C.TCP
+}
+
 func (h *Http) shakeHand(metadata *C.Metadata, rw io.ReadWriter) error {
 	addr := metadata.RemoteAddress()
-	req := &http.Request{
-		Method: http.MethodConnect,
-		URL: &url.URL{
-			Host: addr,
-		},
-		Host:   addr,
-		Header: h.Headers.Clone(),
+	HeaderString := "CONNECT " + addr + " HTTP/1.1\r\n"
+	tempHeaders := map[string]string{
+		"Host":             addr,
+		"User-Agent":       "Go-http-client/1.1",
+		"Proxy-Connection": "Keep-Alive",
 	}
 
-	req.Header.Add("Proxy-Connection", "Keep-Alive")
+	for key, value := range h.option.Headers {
+		tempHeaders[key] = value
+	}
 
 	if h.user != "" && h.pass != "" {
 		auth := h.user + ":" + h.pass
-		req.Header.Add("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth)))
+		tempHeaders["Proxy-Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	}
 
-	if err := req.Write(rw); err != nil {
+	for key, value := range tempHeaders {
+		HeaderString += key + ": " + value + "\r\n"
+	}
+
+	HeaderString += "\r\n"
+
+	_, err := rw.Write([]byte(HeaderString))
+
+	if err != nil {
 		return err
 	}
 
-	resp, err := http.ReadResponse(bufio.NewReader(rw), req)
+	resp, err := http.ReadResponse(bufio.NewReader(rw), nil)
+
 	if err != nil {
 		return err
 	}
@@ -123,35 +150,37 @@ func (h *Http) shakeHand(metadata *C.Metadata, rw io.ReadWriter) error {
 	return fmt.Errorf("can not connect remote err code: %d", resp.StatusCode)
 }
 
-func NewHttp(option HttpOption) *Http {
+func NewHttp(option HttpOption) (*Http, error) {
 	var tlsConfig *tls.Config
 	if option.TLS {
 		sni := option.Server
 		if option.SNI != "" {
 			sni = option.SNI
 		}
-		tlsConfig = &tls.Config{
+		var err error
+		tlsConfig, err = ca.GetSpecifiedFingerprintTLSConfig(&tls.Config{
 			InsecureSkipVerify: option.SkipCertVerify,
 			ServerName:         sni,
+		}, option.Fingerprint)
+		if err != nil {
+			return nil, err
 		}
-	}
-
-	headers := http.Header{}
-	for name, value := range option.Headers {
-		headers.Add(name, value)
 	}
 
 	return &Http{
 		Base: &Base{
-			name:  option.Name,
-			addr:  net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
-			tp:    C.Http,
-			iface: option.Interface,
-			rmark: option.RoutingMark,
+			name:   option.Name,
+			addr:   net.JoinHostPort(option.Server, strconv.Itoa(option.Port)),
+			tp:     C.Http,
+			tfo:    option.TFO,
+			mpTcp:  option.MPTCP,
+			iface:  option.Interface,
+			rmark:  option.RoutingMark,
+			prefer: C.NewDNSPrefer(option.IPVersion),
 		},
 		user:      option.UserName,
 		pass:      option.Password,
 		tlsConfig: tlsConfig,
-		Headers:   headers,
-	}
+		option:    &option,
+	}, nil
 }

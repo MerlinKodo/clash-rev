@@ -7,10 +7,12 @@ import (
 	"crypto/rc4"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
 
+	N "github.com/MerlinKodo/clash-rev/common/net"
 	"github.com/MerlinKodo/clash-rev/common/pool"
 	"github.com/MerlinKodo/clash-rev/log"
 	"github.com/MerlinKodo/clash-rev/transport/shadowsocks/core"
@@ -83,13 +85,13 @@ func (a *authChainA) StreamConn(c net.Conn, iv []byte) net.Conn {
 	return &Conn{Conn: c, Protocol: p}
 }
 
-func (a *authChainA) PacketConn(c net.PacketConn) net.PacketConn {
+func (a *authChainA) PacketConn(c N.EnhancePacketConn) N.EnhancePacketConn {
 	p := &authChainA{
 		Base:     a.Base,
 		salt:     a.salt,
 		userData: a.userData,
 	}
-	return &PacketConn{PacketConn: c, Protocol: p}
+	return &PacketConn{EnhancePacketConn: c, Protocol: p}
 }
 
 func (a *authChainA) Decode(dst, src *bytes.Buffer) error {
@@ -106,6 +108,10 @@ func (a *authChainA) Decode(dst, src *bytes.Buffer) error {
 		dataLength := int(binary.LittleEndian.Uint16(src.Bytes()[:2]) ^ binary.LittleEndian.Uint16(a.lastServerHash[14:16]))
 		randDataLength := a.randDataLength(dataLength, a.lastServerHash, &a.randomServer)
 		length := dataLength + randDataLength
+		// Temporary workaround for https://github.com/MerlinKodo/clash-rev/issues/1352
+		if dataLength < 0 || randDataLength < 0 || length < 0 {
+			return errors.New("ssr crashing blocked")
+		}
 
 		if length >= 4096 {
 			a.rawTrans = true
@@ -129,6 +135,11 @@ func (a *authChainA) Decode(dst, src *bytes.Buffer) error {
 		if dataLength > 0 && randDataLength > 0 {
 			pos += getRandStartPos(randDataLength, &a.randomServer)
 		}
+		// Temporary workaround for https://github.com/MerlinKodo/clash-rev/issues/1352
+		if pos < 0 || pos+dataLength < 0 || dataLength < 0 {
+			return errors.New("ssr crashing blocked")
+		}
+
 		wantedData := src.Bytes()[pos : pos+dataLength]
 		a.decrypter.XORKeyStream(wantedData, wantedData)
 		if a.recvID == 1 {

@@ -12,7 +12,7 @@ import (
 	"github.com/MerlinKodo/clash-rev/transport/socks5"
 )
 
-func newClient(source net.Addr, originTarget net.Addr, in chan<- C.ConnContext) *http.Client {
+func newClient(srcConn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			// from http.DefaultTransport
@@ -32,7 +32,7 @@ func newClient(source net.Addr, originTarget net.Addr, in chan<- C.ConnContext) 
 
 				left, right := net.Pipe()
 
-				in <- inbound.NewHTTP(dstAddr, source, originTarget, right)
+				go tunnel.HandleTCPConn(inbound.NewHTTP(dstAddr, srcConn, right, additions...))
 
 				return left, nil
 			},

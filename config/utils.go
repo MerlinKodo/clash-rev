@@ -1,12 +1,36 @@
 package config
 
 import (
+	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/netip"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/MerlinKodo/clash-rev/adapter/outboundgroup"
 	"github.com/MerlinKodo/clash-rev/common/structure"
+	clashHttp "github.com/MerlinKodo/clash-rev/component/http"
 )
+
+func downloadForBytes(url string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*90)
+	defer cancel()
+	resp, err := clashHttp.HttpRequest(ctx, url, http.MethodGet, http.Header{"User-Agent": {"clash"}}, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return io.ReadAll(resp.Body)
+}
+
+func saveFile(bytes []byte, path string) error {
+	return os.WriteFile(path, bytes, 0o644)
+}
 
 func trimArr(arr []string) (r []string) {
 	for _, e := range arr {
@@ -145,4 +169,17 @@ func proxyGroupsDagSort(groupsConfig []map[string]any) error {
 		delete(graph, name)
 	}
 	return fmt.Errorf("loop is detected in ProxyGroup, please check following ProxyGroups: %v", loopElements)
+}
+
+func verifyIP6() bool {
+	if iAddrs, err := net.InterfaceAddrs(); err == nil {
+		for _, addr := range iAddrs {
+			if prefix, err := netip.ParsePrefix(addr.String()); err == nil {
+				if addr := prefix.Addr().Unmap(); addr.Is6() && addr.IsGlobalUnicast() {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

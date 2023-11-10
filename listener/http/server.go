@@ -3,6 +3,7 @@ package http
 import (
 	"net"
 
+	"github.com/MerlinKodo/clash-rev/adapter/inbound"
 	"github.com/MerlinKodo/clash-rev/common/cache"
 	C "github.com/MerlinKodo/clash-rev/constant"
 )
@@ -29,19 +30,26 @@ func (l *Listener) Close() error {
 	return l.listener.Close()
 }
 
-func New(addr string, in chan<- C.ConnContext) (C.Listener, error) {
-	return NewWithAuthenticate(addr, in, true)
+func New(addr string, tunnel C.Tunnel, additions ...inbound.Addition) (*Listener, error) {
+	return NewWithAuthenticate(addr, tunnel, true, additions...)
 }
 
-func NewWithAuthenticate(addr string, in chan<- C.ConnContext, authenticate bool) (C.Listener, error) {
-	l, err := net.Listen("tcp", addr)
+func NewWithAuthenticate(addr string, tunnel C.Tunnel, authenticate bool, additions ...inbound.Addition) (*Listener, error) {
+	if len(additions) == 0 {
+		additions = []inbound.Addition{
+			inbound.WithInName("DEFAULT-HTTP"),
+			inbound.WithSpecialRules(""),
+		}
+	}
+	l, err := inbound.Listen("tcp", addr)
+
 	if err != nil {
 		return nil, err
 	}
 
-	var c *cache.LruCache
+	var c *cache.LruCache[string, bool]
 	if authenticate {
-		c = cache.New(cache.WithAge(30))
+		c = cache.New[string, bool](cache.WithAge[string, bool](30))
 	}
 
 	hl := &Listener{
@@ -57,7 +65,7 @@ func NewWithAuthenticate(addr string, in chan<- C.ConnContext, authenticate bool
 				}
 				continue
 			}
-			go HandleConn(conn, in, c)
+			go HandleConn(conn, tunnel, c, additions...)
 		}
 	}()
 

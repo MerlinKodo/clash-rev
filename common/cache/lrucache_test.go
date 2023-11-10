@@ -19,7 +19,7 @@ var entries = []struct {
 }
 
 func TestLRUCache(t *testing.T) {
-	c := New()
+	c := New[string, string]()
 
 	for _, e := range entries {
 		c.Set(e.key, e.value)
@@ -32,7 +32,7 @@ func TestLRUCache(t *testing.T) {
 	for _, e := range entries {
 		value, ok := c.Get(e.key)
 		if assert.True(t, ok) {
-			assert.Equal(t, e.value, value.(string))
+			assert.Equal(t, e.value, value)
 		}
 	}
 
@@ -45,25 +45,25 @@ func TestLRUCache(t *testing.T) {
 }
 
 func TestLRUMaxAge(t *testing.T) {
-	c := New(WithAge(86400))
+	c := New[string, string](WithAge[string, string](86400))
 
 	now := time.Now().Unix()
 	expected := now + 86400
 
 	// Add one expired entry
 	c.Set("foo", "bar")
-	c.lru.Back().Value.(*entry).expires = now
+	c.lru.Back().Value.expires = now
 
 	// Reset
 	c.Set("foo", "bar")
-	e := c.lru.Back().Value.(*entry)
+	e := c.lru.Back().Value
 	assert.True(t, e.expires >= now)
-	c.lru.Back().Value.(*entry).expires = now
+	c.lru.Back().Value.expires = now
 
 	// Set a few and verify expiration times
 	for _, s := range entries {
 		c.Set(s.key, s.value)
-		e := c.lru.Back().Value.(*entry)
+		e := c.lru.Back().Value
 		assert.True(t, e.expires >= expected && e.expires <= expected+10)
 	}
 
@@ -77,7 +77,7 @@ func TestLRUMaxAge(t *testing.T) {
 	for _, s := range entries {
 		le, ok := c.cache[s.key]
 		if assert.True(t, ok) {
-			le.Value.(*entry).expires = now
+			le.Value.expires = now
 		}
 	}
 
@@ -88,22 +88,22 @@ func TestLRUMaxAge(t *testing.T) {
 }
 
 func TestLRUpdateOnGet(t *testing.T) {
-	c := New(WithAge(86400), WithUpdateAgeOnGet())
+	c := New[string, string](WithAge[string, string](86400), WithUpdateAgeOnGet[string, string]())
 
 	now := time.Now().Unix()
 	expires := now + 86400/2
 
 	// Add one expired entry
 	c.Set("foo", "bar")
-	c.lru.Back().Value.(*entry).expires = expires
+	c.lru.Back().Value.expires = expires
 
 	_, ok := c.Get("foo")
 	assert.True(t, ok)
-	assert.True(t, c.lru.Back().Value.(*entry).expires > expires)
+	assert.True(t, c.lru.Back().Value.expires > expires)
 }
 
 func TestMaxSize(t *testing.T) {
-	c := New(WithSize(2))
+	c := New[string, string](WithSize[string, string](2))
 	// Add one expired entry
 	c.Set("foo", "bar")
 	_, ok := c.Get("foo")
@@ -117,7 +117,7 @@ func TestMaxSize(t *testing.T) {
 }
 
 func TestExist(t *testing.T) {
-	c := New(WithSize(1))
+	c := New[int, int](WithSize[int, int](1))
 	c.Set(1, 2)
 	assert.True(t, c.Exist(1))
 	c.Set(2, 3)
@@ -126,11 +126,11 @@ func TestExist(t *testing.T) {
 
 func TestEvict(t *testing.T) {
 	temp := 0
-	evict := func(key any, value any) {
-		temp = key.(int) + value.(int)
+	evict := func(key int, value int) {
+		temp = key + value
 	}
 
-	c := New(WithEvict(evict), WithSize(1))
+	c := New[int, int](WithEvict[int, int](evict), WithSize[int, int](1))
 	c.Set(1, 2)
 	c.Set(2, 3)
 
@@ -138,21 +138,22 @@ func TestEvict(t *testing.T) {
 }
 
 func TestSetWithExpire(t *testing.T) {
-	c := New(WithAge(1))
+	c := New[int, *struct{}](WithAge[int, *struct{}](1))
 	now := time.Now().Unix()
 
 	tenSecBefore := time.Unix(now-10, 0)
-	c.SetWithExpire(1, 2, tenSecBefore)
+	c.SetWithExpire(1, &struct{}{}, tenSecBefore)
 
 	// res is expected not to exist, and expires should be empty time.Time
 	res, expires, exist := c.GetWithExpire(1)
-	assert.Equal(t, nil, res)
+
+	assert.True(t, nil == res)
 	assert.Equal(t, time.Time{}, expires)
 	assert.Equal(t, false, exist)
 }
 
 func TestStale(t *testing.T) {
-	c := New(WithAge(1), WithStale(true))
+	c := New[int, int](WithAge[int, int](1), WithStale[int, int](true))
 	now := time.Now().Unix()
 
 	tenSecBefore := time.Unix(now-10, 0)
@@ -165,11 +166,11 @@ func TestStale(t *testing.T) {
 }
 
 func TestCloneTo(t *testing.T) {
-	o := New(WithSize(10))
+	o := New[string, int](WithSize[string, int](10))
 	o.Set("1", 1)
 	o.Set("2", 2)
 
-	n := New(WithSize(2))
+	n := New[string, int](WithSize[string, int](2))
 	n.Set("3", 3)
 	n.Set("4", 4)
 

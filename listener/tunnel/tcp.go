@@ -5,6 +5,7 @@ import (
 	"net"
 
 	"github.com/MerlinKodo/clash-rev/adapter/inbound"
+	N "github.com/MerlinKodo/clash-rev/common/net"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/transport/socks5"
 )
@@ -33,15 +34,13 @@ func (l *Listener) Close() error {
 	return l.listener.Close()
 }
 
-func (l *Listener) handleTCP(conn net.Conn, in chan<- C.ConnContext) {
-	conn.(*net.TCPConn).SetKeepAlive(true)
-	ctx := inbound.NewSocket(l.target, conn, C.TUNNEL)
-	ctx.Metadata().SpecialProxy = l.proxy
-	in <- ctx
+func (l *Listener) handleTCP(conn net.Conn, tunnel C.Tunnel, additions ...inbound.Addition) {
+	N.TCPKeepAlive(conn)
+	tunnel.HandleTCPConn(inbound.NewSocket(l.target, conn, C.TUNNEL, additions...))
 }
 
-func New(addr, target, proxy string, in chan<- C.ConnContext) (*Listener, error) {
-	l, err := net.Listen("tcp", addr)
+func New(addr, target, proxy string, tunnel C.Tunnel, additions ...inbound.Addition) (*Listener, error) {
+	l, err := inbound.Listen("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -58,6 +57,10 @@ func New(addr, target, proxy string, in chan<- C.ConnContext) (*Listener, error)
 		addr:     addr,
 	}
 
+	if proxy != "" {
+		additions = append([]inbound.Addition{inbound.WithSpecialProxy(proxy)}, additions...)
+	}
+
 	go func() {
 		for {
 			c, err := l.Accept()
@@ -67,7 +70,7 @@ func New(addr, target, proxy string, in chan<- C.ConnContext) (*Listener, error)
 				}
 				continue
 			}
-			go rl.handleTCP(c, in)
+			go rl.handleTCP(c, tunnel, additions...)
 		}
 	}()
 

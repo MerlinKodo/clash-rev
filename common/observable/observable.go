@@ -37,7 +37,7 @@ func (o *Observable[T]) Subscribe() (Subscription[T], error) {
 	o.mux.Lock()
 	defer o.mux.Unlock()
 	if o.done {
-		return nil, errors.New("Observable is closed")
+		return nil, errors.New("observable is closed")
 	}
 	subscriber := newSubscriber[T]()
 	o.listener[subscriber.Out()] = subscriber
