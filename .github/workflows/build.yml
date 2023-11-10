@@ -6,8 +6,6 @@ on:
       - "docs/**"
       - "README.md"
       - ".github/ISSUE_TEMPLATE/**"
-    branches:
-      - release
     tags:
       - "v*"
       
