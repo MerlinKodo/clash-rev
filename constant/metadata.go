@@ -10,6 +10,8 @@ import (
 	"github.com/MerlinKodo/clash-rev/transport/socks5"
 )
 
+type NetWork int
+
 // Socks addr type
 const (
 	TCP NetWork = iota
@@ -33,8 +35,6 @@ const (
 	HYSTERIA2
 	INNER
 )
-
-type NetWork int
 
 func (n NetWork) String() string {
 	switch n {

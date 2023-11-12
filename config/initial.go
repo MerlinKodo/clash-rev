@@ -18,11 +18,12 @@ func Init(dir string) error {
 	}
 
 	// initial config.yaml
-	if _, err := os.Stat(C.Path.Config()); os.IsNotExist(err) {
-		log.Infoln("Can't find config, create a initial config file")
-		f, err := os.OpenFile(C.Path.Config(), os.O_CREATE|os.O_WRONLY, 0o644)
+	configPath := C.Path.Config()
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		log.Infoln("Can't find config, create an initial config file")
+		f, err := os.OpenFile(configPath, os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
-			return fmt.Errorf("can't create file %s: %s", C.Path.Config(), err.Error())
+			return fmt.Errorf("can't create file %s: %s", configPath, err.Error())
 		}
 		f.Write([]byte(`mixed-port: 7890`))
 		f.Close()

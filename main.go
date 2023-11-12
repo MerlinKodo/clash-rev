@@ -112,7 +112,6 @@ func testConfiguration() {
 		log.Errorln(err.Error())
 		fmt.Printf("configuration file %s test failed\n", C.Path.Config())
 		os.Exit(1)
-		os.Exit(1)
 	}
 	fmt.Printf("configuration file %s test is successful\n", C.Path.Config())
 }

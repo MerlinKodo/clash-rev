@@ -42,6 +42,7 @@ func Parse(options ...Option) error {
 		route.SetUIPath(cfg.General.ExternalUI)
 	}
 
+	// start external controller
 	if cfg.General.ExternalController != "" {
 		go route.Start(cfg.General.ExternalController, cfg.General.ExternalControllerTLS,
 			cfg.General.Secret, cfg.TLS.Certificate, cfg.TLS.PrivateKey, cfg.General.LogLevel == log.DEBUG)
