@@ -19,9 +19,9 @@ mode: rule
 
 #自定义 geodata url
 geox-url:
-  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
-  geosite: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geosite.dat"
-  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
+  geoip: "https://fastly.jsdelivr.net/gh/MerlinKodo/meta-rules-dat@release/geoip.dat"
+  geosite: "https://fastly.jsdelivr.net/gh/MerlinKodo/meta-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/MerlinKodo/meta-rules-dat@release/geoip.metadb"
 
 log-level: debug # 日志等级 silent/error/warning/info/debug
 
@@ -45,7 +45,7 @@ external-controller-tls: 0.0.0.0:9443 # RESTful API HTTPS 监听地址，需要�
 # 配置 WEB UI 目录，使用 http://{{external-controller}}/ui 访问
 external-ui: /path/to/ui/folder/
 external-ui-name: xd
-external-ui-url: "https://github.com/MetaCubeX/metacubexd/archive/refs/heads/gh-pages.zip"
+external-ui-url: "https://github.com/MerlinKodo/metacubexd/archive/refs/heads/gh-pages.zip"
 
 # interface-name: en0 # 设置出口网卡
 
