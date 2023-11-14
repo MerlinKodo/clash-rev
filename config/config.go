@@ -76,6 +76,8 @@ type Inbound struct {
 	VmessConfig       string         `json:"vmess-config"`
 	Authentication    []string       `json:"authentication"`
 	SkipAuthPrefixes  []netip.Prefix `json:"skip-auth-prefixes"`
+	LanAllowedIPs     []netip.Prefix `json:"lan-allowed-ips"`
+	LanDisAllowedIPs  []netip.Prefix `json:"lan-disallowed-ips"`
 	AllowLan          bool           `json:"allow-lan"`
 	BindAddress       string         `json:"bind-address"`
 	InboundTfo        bool           `json:"inbound-tfo"`
@@ -275,6 +277,8 @@ type RawConfig struct {
 	Authentication          []string          `yaml:"authentication"`
 	SkipAuthPrefixes        []netip.Prefix    `yaml:"skip-auth-prefixes"`
 	AllowLan                bool              `yaml:"allow-lan"`
+	LanAllowedIPs           []netip.Prefix    `yaml:"lan-allowed-ips"`
+	LanDisAllowedIPs        []netip.Prefix    `yaml:"lan-disallowed-ips"`
 	BindAddress             string            `yaml:"bind-address"`
 	Mode                    T.TunnelMode      `yaml:"mode"`
 	UnifiedDelay            bool              `yaml:"unified-delay"`
@@ -368,6 +372,7 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 	rawCfg := &RawConfig{
 		AllowLan:        false,
 		BindAddress:     "*",
+		LanAllowedIPs:   []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
 		IPv6:            true,
 		Mode:            T.Rule,
 		GeodataMode:     C.GeodataMode,
@@ -473,7 +478,6 @@ func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 	if err := yaml.Unmarshal(buf, rawCfg); err != nil {
 		return nil, err
 	}
-
 	return rawCfg, nil
 }
 
@@ -623,6 +627,8 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 			ShadowSocksConfig: cfg.ShadowSocksConfig,
 			VmessConfig:       cfg.VmessConfig,
 			AllowLan:          cfg.AllowLan,
+			LanAllowedIPs:     cfg.LanAllowedIPs,
+			LanDisAllowedIPs:  cfg.LanDisAllowedIPs,
 			SkipAuthPrefixes:  cfg.SkipAuthPrefixes,
 			BindAddress:       cfg.BindAddress,
 			InboundTfo:        cfg.InboundTfo,

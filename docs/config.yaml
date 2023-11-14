@@ -8,6 +8,11 @@ mixed-port: 10801 # HTTP(S) 和 SOCKS 代理混合端口
 
 allow-lan: true # 允许局域网连接
 bind-address: "*" # 绑定 IP 地址，仅作用于 allow-lan 为 true，'*'表示所有地址
+lan-allowed-ips: # 允许连接的 IP 地址段，仅作用于 allow-lan 为 true, 默认值为0.0.0.0/0和::/0
+  - 0.0.0.0/0
+  - ::/0
+lan-disallowed-ips: # 禁止连接的 IP 地址段, 黑名单优先级高于白名单
+  - 10.65.10.0/24
 
 #  find-process-mode has 3 values:always, strict, off
 #  - always, 开启，强制匹配所有进程

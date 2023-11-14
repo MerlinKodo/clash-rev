@@ -50,6 +50,8 @@ type configSchema struct {
 	UdptunConfig      *string            `json:"udptun-config"`
 	AllowLan          *bool              `json:"allow-lan"`
 	SkipAuthPrefixes  *[]netip.Prefix    `json:"skip-auth-prefixes"`
+	LanAllowedIPs     *[]netip.Prefix    `json:"lan-allowed-ips"`
+	LanDisAllowedIPs  *[]netip.Prefix    `json:"lan-disallowed-ips"`
 	BindAddress       *string            `json:"bind-address"`
 	Mode              *tunnel.TunnelMode `json:"mode"`
 	LogLevel          *log.LogLevel      `json:"log-level"`
@@ -250,6 +252,14 @@ func patchConfigs(w http.ResponseWriter, r *http.Request) {
 
 	if general.SkipAuthPrefixes != nil {
 		inbound.SetSkipAuthPrefixes(*general.SkipAuthPrefixes)
+	}
+
+	if general.LanAllowedIPs != nil {
+		inbound.SetAllowedIPs(*general.LanAllowedIPs)
+	}
+
+	if general.LanDisAllowedIPs != nil {
+		inbound.SetDisAllowedIPs(*general.LanDisAllowedIPs)
 	}
 
 	if general.BindAddress != nil {
