@@ -39,7 +39,7 @@ func NewApp() *App {
 	return app
 }
 
-func (a *App) Run(args []string) error {
+func (a *App) Run() error {
 	return a.RootCmd.Execute()
 }
 
