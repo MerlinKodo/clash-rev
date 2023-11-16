@@ -56,6 +56,7 @@ func (a *App) setupRootCmd() {
 	a.RootCmd.PersistentFlags().StringVar(&a.Config.configUrlHeader, "cfg-header", a.Config.configUrlHeader, "specify configuration file url header, env: CLASH_CONFIG_URL_HEADER")
 	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalUI, "ext-ui", a.Config.externalUI, "override external ui directory, env: CLASH_OVERRIDE_EXTERNAL_UI_DIR")
 	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalController, "ext-ctl", a.Config.externalController, "override external controller address, env: CLASH_OVERRIDE_EXTERNAL_CONTROLLER")
+	a.RootCmd.PersistentFlags().StringVar(&a.Config.secret, "secret", a.Config.secret, "override secret, env: CLASH_OVERRIDE_SECRET")
 	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.geodataMode, "geodata", "m", false, "set geodata mode")
 	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.version, "version", "v", false, "show current version of clash")
 	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.testConfig, "test", "t", false, "test configuration and exit")
@@ -68,9 +69,10 @@ func (a *App) execute(cmd *cobra.Command, args []string) {
 		a.printVersion()
 		return
 	}
-
-	a.Config.homeDir = resolvePath(a.Config.homeDir)
-	C.SetHomeDir(a.Config.homeDir)
+	if a.Config.homeDir != "" {
+		a.Config.homeDir = resolvePath(a.Config.homeDir)
+		C.SetHomeDir(a.Config.homeDir)
+	}
 
 	a.Config.configFile = a.resolveConfigFile()
 	C.SetConfig(a.Config.configFile)
