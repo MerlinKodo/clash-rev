@@ -284,18 +284,6 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      
-      - name: Get tags
-        run: |
-          git fetch --tags
-          echo "CURRENTVERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          echo "PREVERSION=$(git tag --sort=-v:refname | grep -B 1 $CURRENTVERSION | head -n 1)" >> $GITHUB_ENV
-      
-      - name: Generate release notes
-        run: |
-          cp ./.github/genReleaseNote.sh ./
-          bash ./genReleaseNote.sh -v ${PREVERSION}...${CURRENTVERSION}
-          rm ./genReleaseNote.sh
 
       - uses: actions/download-artifact@v3
         with:
@@ -313,7 +301,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           files: bin/*
           generate_release_notes: true
-          body_path: release.md
 
   Docker:
     if: ${{ github.event_name != 'pull_request'  }}
