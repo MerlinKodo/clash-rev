@@ -287,9 +287,9 @@ jobs:
       
       - name: Get tags
         run: |
-          echo "CURRENTVERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
           git fetch --tags
-          echo "PREVERSION=$(git describe --tags --abbrev=0 HEAD^)" >> $GITHUB_ENV
+          echo "CURRENTVERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "PREVERSION=$(git tag --sort=-v:refname | grep -B 1 $CURRENTVERSION | head -n 1)" >> $GITHUB_ENV
       
       - name: Generate release notes
         run: |
