@@ -51,7 +51,7 @@ Clash.Rev is a personal successor to the discontinued Clash-core and Clash.Meta,
 
 ## Features
 
-This is a general overview of the features that comes with Clash.  
+This is a general overview of the features that comes with Clash.
 
 - Inbound: HTTP, HTTPS, SOCKS5 server, TUN device
 - Outbound: Shadowsocks(R), VMess, Trojan, Snell, SOCKS5, HTTP(S), Wireguard
@@ -64,7 +64,7 @@ This is a general overview of the features that comes with Clash.
 
 ## Documentation
 
-You can find the latest documentation at [https://merlinkodo.github.io/clash-rev-doc/](https://merlinkodo.github.io/clash-rev-doc/).
+You can find the latest documentation at [https://merlinkodo.github.io/Clash-Rev-Doc/](https://merlinkodo.github.io/Clash-Rev-Doc/).
 
 ## Credits
 
