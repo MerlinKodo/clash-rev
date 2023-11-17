@@ -6,12 +6,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strings"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/MerlinKodo/clash-rev/config"
 	C "github.com/MerlinKodo/clash-rev/constant"
-	"github.com/MerlinKodo/clash-rev/constant/features"
 	"github.com/MerlinKodo/clash-rev/hub"
 	"github.com/MerlinKodo/clash-rev/hub/executor"
 	"github.com/MerlinKodo/clash-rev/log"
@@ -50,16 +49,16 @@ func (a *App) setupRootCmd() {
 		Long:  `Clash Rev is a rule-based tunnel in Go. Check out the project home page for more information: https://merlinkodo.github.io/Clash-Rev-Doc/`,
 		Run:   a.execute,
 	}
-	a.RootCmd.PersistentFlags().StringVarP(&a.Config.homeDir, "dir", "d", a.Config.homeDir, "specify configuration directory, env: CLASH_HOME_DIR")
-	a.RootCmd.PersistentFlags().StringVarP(&a.Config.configFile, "config", "f", a.Config.configFile, "specify configuration file, env: CLASH_CONFIG_FILE")
-	a.RootCmd.PersistentFlags().StringVar(&a.Config.configUrl, "cfg-url", a.Config.configUrl, "specify configuration file url, env: CLASH_CONFIG_URL")
-	a.RootCmd.PersistentFlags().StringVar(&a.Config.configUrlHeader, "cfg-header", a.Config.configUrlHeader, "specify configuration file url header, env: CLASH_CONFIG_URL_HEADER")
-	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalUI, "ext-ui", a.Config.externalUI, "override external ui directory, env: CLASH_OVERRIDE_EXTERNAL_UI_DIR")
-	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalController, "ext-ctl", a.Config.externalController, "override external controller address, env: CLASH_OVERRIDE_EXTERNAL_CONTROLLER")
+	a.RootCmd.PersistentFlags().StringVarP(&a.Config.homeDir, "dir", "d", a.Config.homeDir, "Specify configuration directory, env: CLASH_HOME_DIR")
+	a.RootCmd.PersistentFlags().StringVarP(&a.Config.configFile, "config", "f", a.Config.configFile, "Specify configuration file, env: CLASH_CONFIG_FILE")
+	a.RootCmd.PersistentFlags().StringVar(&a.Config.configUrl, "cfg-url", a.Config.configUrl, "Specify configuration file url, env: CLASH_CONFIG_URL")
+	a.RootCmd.PersistentFlags().StringVar(&a.Config.configUrlHeader, "cfg-header", a.Config.configUrlHeader, "Specify configuration file url header, env: CLASH_CONFIG_URL_HEADER")
+	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalUI, "ext-ui", a.Config.externalUI, "Override external ui directory, env: CLASH_OVERRIDE_EXTERNAL_UI_DIR")
+	a.RootCmd.PersistentFlags().StringVar(&a.Config.externalController, "ext-ctl", a.Config.externalController, "Override external controller address, env: CLASH_OVERRIDE_EXTERNAL_CONTROLLER")
 	a.RootCmd.PersistentFlags().StringVar(&a.Config.secret, "secret", a.Config.secret, "override secret, env: CLASH_OVERRIDE_SECRET")
-	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.geodataMode, "geodata", "m", false, "set geodata mode")
-	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.version, "version", "v", false, "show current version of clash")
-	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.testConfig, "test", "t", false, "test configuration and exit")
+	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.geodataMode, "geodata", "m", false, "Set geodata mode")
+	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.version, "version", "v", false, "Print current version of clash")
+	a.RootCmd.PersistentFlags().BoolVarP(&a.Config.testConfig, "test", "t", false, "Test configuration and exit")
 }
 
 func (a *App) execute(cmd *cobra.Command, args []string) {
@@ -103,12 +102,37 @@ func (a *App) execute(cmd *cobra.Command, args []string) {
 }
 
 func (a *App) printVersion() {
-	fmt.Printf(
-		"Clash Rev Version: %s\nOS: %s\nArchitecture: %s\nGo Version: %s\nBuild Time: %s\n",
-		C.Version, runtime.GOOS, runtime.GOARCH, runtime.Version(), C.BuildTime)
-	if len(features.TAGS) != 0 {
-		fmt.Printf("Use tags: %s\n", strings.Join(features.TAGS, ", "))
+	versionString := "Clash Rev Version: " + C.Version + "\n\n"
+	versionString += "OS: " + runtime.GOOS + "\n" + "Architecture: " + runtime.GOARCH + "\n" + "Go Version: " + runtime.Version() + "\n" + "Build Time: " + C.BuildTime + "\n"
+
+	var tags string
+	var revision string
+
+	debugInfo, loaded := debug.ReadBuildInfo()
+	if loaded {
+		for _, setting := range debugInfo.Settings {
+			switch setting.Key {
+			case "-tags":
+				tags = setting.Value
+			case "vcs.revision":
+				revision = setting.Value
+			}
+		}
 	}
+	if tags != "" {
+		versionString += "Tags: " + tags + "\n"
+	}
+	if revision != "" {
+		versionString += "Revision: " + revision + "\n"
+	}
+
+	if C.CGO_ENABLED {
+		versionString += "CGO Enabled: Yes\n"
+	} else {
+		versionString += "CGO Enabled: No\n"
+	}
+
+	fmt.Println(versionString)
 }
 
 func (a *App) resolveConfigFile() string {
