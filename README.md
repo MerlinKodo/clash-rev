@@ -17,7 +17,7 @@ Clash.Rev is a Command Line Interface (CLI) program. You can operate it with `Cl
 
 Taking Windows platform as an example, navigate to the `resources/static/files/win/x64` directory under the installation directory of CFW. Rename the binary file you downloaded for your system to `clash-win64.exe`, then replace the file with the same name, and restart CFW.
 
-If you need to use TUN mode, please run CFW as an administrator.
+After replacing the binary file, service mode will be unavailable. If you need to use TUN mode, please run CFW as an administrator.
 
 ### Clash Verge
 
