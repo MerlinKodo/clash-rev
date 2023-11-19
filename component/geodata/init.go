@@ -21,7 +21,7 @@ func InitGeoSite() error {
 	if _, err := os.Stat(C.Path.GeoSite()); os.IsNotExist(err) {
 		log.Infoln("Can't find GeoSite.dat, start download")
 		if err := downloadGeoSite(C.Path.GeoSite()); err != nil {
-			return fmt.Errorf("can't download GeoSite.dat: %s", err.Error())
+			return fmt.Errorf("can't download GeoSite.dat: %w", err)
 		}
 		log.Infoln("Download GeoSite.dat finish")
 		initGeoSite = false
@@ -30,10 +30,10 @@ func InitGeoSite() error {
 		if err := Verify(C.GeositeName); err != nil {
 			log.Warnln("GeoSite.dat invalid, remove and download: %s", err)
 			if err := os.Remove(C.Path.GeoSite()); err != nil {
-				return fmt.Errorf("can't remove invalid GeoSite.dat: %s", err.Error())
+				return fmt.Errorf("can't remove invalid GeoSite.dat: %w", err)
 			}
 			if err := downloadGeoSite(C.Path.GeoSite()); err != nil {
-				return fmt.Errorf("can't download GeoSite.dat: %s", err.Error())
+				return fmt.Errorf("can't download GeoSite.dat: %w", err)
 			}
 		}
 		initGeoSite = true
@@ -84,7 +84,7 @@ func InitGeoIP() error {
 		if _, err := os.Stat(C.Path.GeoIP()); os.IsNotExist(err) {
 			log.Infoln("Can't find GeoIP.dat, start download")
 			if err := downloadGeoIP(C.Path.GeoIP()); err != nil {
-				return fmt.Errorf("can't download GeoIP.dat: %s", err.Error())
+				return fmt.Errorf("can't download GeoIP.dat: %w", err)
 			}
 			log.Infoln("Download GeoIP.dat finish")
 			initGeoIP = 0
@@ -94,10 +94,10 @@ func InitGeoIP() error {
 			if err := Verify(C.GeoipName); err != nil {
 				log.Warnln("GeoIP.dat invalid, remove and download: %s", err)
 				if err := os.Remove(C.Path.GeoIP()); err != nil {
-					return fmt.Errorf("can't remove invalid GeoIP.dat: %s", err.Error())
+					return fmt.Errorf("can't remove invalid GeoIP.dat: %w", err)
 				}
 				if err := downloadGeoIP(C.Path.GeoIP()); err != nil {
-					return fmt.Errorf("can't download GeoIP.dat: %s", err.Error())
+					return fmt.Errorf("can't download GeoIP.dat: %w", err)
 				}
 			}
 			initGeoIP = 1
@@ -108,7 +108,7 @@ func InitGeoIP() error {
 	if _, err := os.Stat(C.Path.MMDB()); os.IsNotExist(err) {
 		log.Infoln("Can't find MMDB, start download")
 		if err := mmdb.DownloadMMDB(C.Path.MMDB()); err != nil {
-			return fmt.Errorf("can't download MMDB: %s", err.Error())
+			return fmt.Errorf("can't download MMDB: %w", err)
 		}
 	}
 
@@ -116,10 +116,10 @@ func InitGeoIP() error {
 		if !mmdb.Verify() {
 			log.Warnln("MMDB invalid, remove and download")
 			if err := os.Remove(C.Path.MMDB()); err != nil {
-				return fmt.Errorf("can't remove invalid MMDB: %s", err.Error())
+				return fmt.Errorf("can't remove invalid MMDB: %w", err)
 			}
 			if err := mmdb.DownloadMMDB(C.Path.MMDB()); err != nil {
-				return fmt.Errorf("can't download MMDB: %s", err.Error())
+				return fmt.Errorf("can't download MMDB: %w", err)
 			}
 		}
 		initGeoIP = 2

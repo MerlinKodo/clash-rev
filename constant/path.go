@@ -17,6 +17,12 @@ var (
 	GeoipName   = "GeoIP.dat"
 )
 
+type path struct {
+	homeDir         string
+	configFile      string
+	allowUnsafePath bool
+}
+
 // Path is used to get the configuration path
 //
 // on Unix systems, `$HOME/.config/clash`.
@@ -37,12 +43,6 @@ var Path = func() *path {
 
 	return &path{homeDir: homeDir, configFile: "config.yaml", allowUnsafePath: allowUnsafePath}
 }()
-
-type path struct {
-	homeDir         string
-	configFile      string
-	allowUnsafePath bool
-}
 
 // SetHomeDir is used to set the configuration path
 func SetHomeDir(root string) {
