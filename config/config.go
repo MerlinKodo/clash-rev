@@ -53,6 +53,8 @@ type General struct {
 	Interface               string            `json:"interface-name"`
 	RoutingMark             int               `json:"-"`
 	GeoXUrl                 GeoXUrl           `json:"geox-url"`
+	GeoAutoUpdate           bool              `json:"geo-auto-update"`
+	GeoUpdateInterval       int               `json:"geo-update-interval"`
 	GeodataMode             bool              `json:"geodata-mode"`
 	GeodataLoader           string            `json:"geodata-loader"`
 	TCPConcurrent           bool              `json:"tcp-concurrent"`
@@ -293,6 +295,8 @@ type RawConfig struct {
 	Interface               string            `yaml:"interface-name"`
 	RoutingMark             int               `yaml:"routing-mark"`
 	Tunnels                 []LC.Tunnel       `yaml:"tunnels"`
+	GeoAutoUpdate           bool              `yaml:"geo-auto-update"`
+	GeoUpdateInterval       int               `yaml:"geo-update-interval"`
 	GeodataMode             bool              `yaml:"geodata-mode"`
 	GeodataLoader           string            `yaml:"geodata-loader"`
 	TCPConcurrent           bool              `yaml:"tcp-concurrent" json:"tcp-concurrent"`
@@ -370,23 +374,25 @@ func Parse(buf []byte) (*Config, error) {
 func UnmarshalRawConfig(buf []byte) (*RawConfig, error) {
 	// config with default value
 	rawCfg := &RawConfig{
-		AllowLan:        false,
-		BindAddress:     "*",
-		LanAllowedIPs:   []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
-		IPv6:            true,
-		Mode:            T.Rule,
-		GeodataMode:     C.GeodataMode,
-		GeodataLoader:   "memconservative",
-		UnifiedDelay:    false,
-		Authentication:  []string{},
-		LogLevel:        log.INFO,
-		Hosts:           map[string]any{},
-		Rule:            []string{},
-		Proxy:           []map[string]any{},
-		ProxyGroup:      []map[string]any{},
-		TCPConcurrent:   false,
-		FindProcessMode: P.FindProcessStrict,
-		GlobalUA:        "clash.rev",
+		AllowLan:          false,
+		BindAddress:       "*",
+		LanAllowedIPs:     []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
+		IPv6:              true,
+		Mode:              T.Rule,
+		GeodataMode:       C.GeodataMode,
+		GeoAutoUpdate:     false,
+		GeoUpdateInterval: 24,
+		GeodataLoader:     "memconservative",
+		UnifiedDelay:      false,
+		Authentication:    []string{},
+		LogLevel:          log.INFO,
+		Hosts:             map[string]any{},
+		Rule:              []string{},
+		Proxy:             []map[string]any{},
+		ProxyGroup:        []map[string]any{},
+		TCPConcurrent:     false,
+		FindProcessMode:   P.FindProcessStrict,
+		GlobalUA:          "clash.rev",
 		Tun: RawTun{
 			Enable:              false,
 			Device:              "",
@@ -583,6 +589,8 @@ func ParseRawConfig(rawCfg *RawConfig) (*Config, error) {
 
 func parseGeneral(cfg *RawConfig) (*General, error) {
 	geodata.SetLoader(cfg.GeodataLoader)
+	C.GeoAutoUpdate = cfg.GeoAutoUpdate
+	C.GeoUpdateInterval = cfg.GeoUpdateInterval
 	C.GeoIpUrl = cfg.GeoXUrl.GeoIp
 	C.GeoSiteUrl = cfg.GeoXUrl.GeoSite
 	C.MmdbUrl = cfg.GeoXUrl.Mmdb
@@ -648,6 +656,8 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		RoutingMark:             cfg.RoutingMark,
 		GeoXUrl:                 cfg.GeoXUrl,
 		GeodataMode:             cfg.GeodataMode,
+		GeoAutoUpdate:           cfg.GeoAutoUpdate,
+		GeoUpdateInterval:       cfg.GeoUpdateInterval,
 		GeodataLoader:           cfg.GeodataLoader,
 		TCPConcurrent:           cfg.TCPConcurrent,
 		FindProcessMode:         cfg.FindProcessMode,

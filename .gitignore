@@ -37,3 +37,6 @@ docs/.vitepress/dist
 
 # config.yaml
 /config.yaml
+
+# simulation dir
+simulation/

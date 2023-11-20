@@ -7,15 +7,23 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/MerlinKodo/clash-rev/config"
+	"github.com/MerlinKodo/clash-rev/constant"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/hub"
 	"github.com/MerlinKodo/clash-rev/hub/executor"
 	"github.com/MerlinKodo/clash-rev/log"
 
 	"github.com/spf13/cobra"
+)
+
+var (
+	updateGeoMux sync.Mutex
+	updatingGeo  = false
 )
 
 func newAppConfig() *AppConfig {
@@ -92,6 +100,17 @@ func (a *App) execute(cmd *cobra.Command, args []string) {
 	options := a.parseOptions()
 	if err := hub.Parse(options...); err != nil {
 		log.Fatalln("Parse config error: %s", err.Error())
+	}
+
+	if C.GeoAutoUpdate {
+		ticker := time.NewTicker(time.Duration(C.GeoUpdateInterval) * time.Hour)
+
+		log.Infoln("Update GEO database every %d hours", C.GeoUpdateInterval)
+		go func() {
+			for range ticker.C {
+				updateGeoDatabases()
+			}
+		}()
 	}
 
 	defer executor.Shutdown()
@@ -193,5 +212,41 @@ func (a *App) handleSignals() {
 				}
 			}
 		}
+	}()
+}
+
+func updateGeoDatabases() {
+	log.Infoln("Start updating GEO database")
+	updateGeoMux.Lock()
+
+	if updatingGeo {
+		updateGeoMux.Unlock()
+		log.Infoln("GEO database is updating, skip")
+		return
+	}
+
+	updatingGeo = true
+	updateGeoMux.Unlock()
+
+	go func() {
+		defer func() {
+			updatingGeo = false
+		}()
+
+		log.Warnln("Updating GEO database")
+
+		if err := config.UpdateGeoDatabases(); err != nil {
+			log.Errorln("update GEO database error: %s", err.Error())
+			return
+		}
+
+		cfg, err := executor.ParseWithPath(constant.Path.Config())
+		if err != nil {
+			log.Errorln("update GEO database failed: %s", err.Error())
+			return
+		}
+
+		log.Warnln("Update GEO database success, apply new config")
+		executor.ApplyConfig(cfg, false)
 	}()
 }
