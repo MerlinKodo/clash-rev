@@ -23,6 +23,10 @@ After replacing the binary file, service mode will be unavailable. If you need t
 
 Taking Windows platform as an example, navigate to the installation directory of Clash Verge. Rename the downloaded binary file to `clash-meta.exe`, then replace the file with the same name, and restart Clash Verge. Switch the kernel to `Meta`, and you're all set.
 
+### Other GUI Clients
+
+[clash-nyanpasu](https://github.com/keiko233/clash-nyanpasu)
+
 ## CLI Usage
 
 Please refer to the [documentation](https://merlinkodo.github.io/Clash-Rev-Doc/startup/cli/) for detailed instructions.
