@@ -20,6 +20,7 @@ func connectionRouter() http.Handler {
 	r.Get("/", getConnections)
 	r.Delete("/", closeAllConnections)
 	r.Delete("/{id}", closeConnection)
+	r.Post("/close", closeMultiConnections)
 	return r
 }
 
@@ -73,10 +74,7 @@ func getConnections(w http.ResponseWriter, r *http.Request) {
 }
 
 func closeConnection(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if c := statistic.DefaultManager.Get(id); c != nil {
-		_ = c.Close()
-	}
+	closeSingleConnection(chi.URLParam(r, "id"))
 	render.NoContent(w, r)
 }
 
@@ -86,4 +84,27 @@ func closeAllConnections(w http.ResponseWriter, r *http.Request) {
 		return true
 	})
 	render.NoContent(w, r)
+}
+
+type idList struct {
+	Ids []string `json:"ids"`
+}
+
+func closeMultiConnections(w http.ResponseWriter, r *http.Request) {
+	var list idList
+	if err := json.NewDecoder(r.Body).Decode(&list); err != nil {
+		render.Status(r, http.StatusBadRequest)
+		render.JSON(w, r, ErrBadRequest)
+		return
+	}
+	for _, id := range list.Ids {
+		closeSingleConnection(id)
+	}
+	render.NoContent(w, r)
+}
+
+func closeSingleConnection(id string) {
+	if c := statistic.DefaultManager.Get(id); c != nil {
+		_ = c.Close()
+	}
 }
