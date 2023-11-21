@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,7 +208,19 @@ func traffic(w http.ResponseWriter, r *http.Request) {
 		render.Status(r, http.StatusOK)
 	}
 
-	tick := time.NewTicker(time.Second)
+	intervalStr := r.URL.Query().Get("interval")
+	interval := 1000
+	if intervalStr != "" {
+		t, err := strconv.Atoi(intervalStr)
+		if err != nil {
+			render.Status(r, http.StatusBadRequest)
+			render.JSON(w, r, ErrBadRequest)
+			return
+		}
+
+		interval = t
+	}
+	tick := time.NewTicker(time.Millisecond * time.Duration(interval))
 	defer tick.Stop()
 	t := statistic.DefaultManager
 	buf := &bytes.Buffer{}
@@ -250,7 +263,21 @@ func memory(w http.ResponseWriter, r *http.Request) {
 		render.Status(r, http.StatusOK)
 	}
 
-	tick := time.NewTicker(time.Second)
+	intervalStr := r.URL.Query().Get("interval")
+	interval := 1000
+
+	if intervalStr != "" {
+		t, err := strconv.Atoi(intervalStr)
+		if err != nil {
+			render.Status(r, http.StatusBadRequest)
+			render.JSON(w, r, ErrBadRequest)
+			return
+		}
+
+		interval = t
+	}
+
+	tick := time.NewTicker(time.Millisecond * time.Duration(interval))
 	defer tick.Stop()
 	t := statistic.DefaultManager
 	buf := &bytes.Buffer{}
@@ -391,5 +418,5 @@ func getLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func version(w http.ResponseWriter, r *http.Request) {
-	render.JSON(w, r, render.M{"meta": C.Meta, "version": C.Version})
+	render.JSON(w, r, render.M{"meta": C.Meta, "version": C.Version, "Rev": C.Rev})
 }
