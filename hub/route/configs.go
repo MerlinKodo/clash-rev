@@ -10,7 +10,6 @@ import (
 	"github.com/MerlinKodo/clash-rev/component/dialer"
 	"github.com/MerlinKodo/clash-rev/component/resolver"
 	"github.com/MerlinKodo/clash-rev/config"
-	"github.com/MerlinKodo/clash-rev/constant"
 	C "github.com/MerlinKodo/clash-rev/constant"
 	"github.com/MerlinKodo/clash-rev/hub/executor"
 	P "github.com/MerlinKodo/clash-rev/listener"
@@ -329,7 +328,7 @@ func updateConfigs(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if req.Path == "" {
-			req.Path = constant.Path.Config()
+			req.Path = C.Path.Config()
 		}
 		if !filepath.IsAbs(req.Path) {
 			render.Status(r, http.StatusBadRequest)
@@ -374,7 +373,7 @@ func updateGeoDatabases(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		cfg, err := executor.ParseWithPath(constant.Path.Config())
+		cfg, err := executor.ParseWithPath(C.Path.Config())
 		if err != nil {
 			log.Errorln("[REST-API] update GEO databases failed: %v", err)
 			return
